@@ -1,0 +1,15 @@
+{
+    "name": "photo-api-mock",
+    "version": "1.0.0",
+    "description": "Mock /api/photos backend for Raspberry Pi photo frame (Cloud Run)",
+    "main": "server.js",
+    "scripts": {
+        "start": "node server.js",
+        "dev": "NODE_ENV=development node server.js"
+    },
+    "dependencies": {
+        "cors": "^2.8.5",
+        "express": "^4.19.2",
+        "googleapis": "^166.0.0"
+    }
+}
