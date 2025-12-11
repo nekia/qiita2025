@@ -9,7 +9,7 @@ COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 
 # アプリ本体コピー
-COPY server.js ./server.js
+COPY server.js photosClient.js ./
 
 # Cloud Run が使うポート番号
 ENV PORT=8080

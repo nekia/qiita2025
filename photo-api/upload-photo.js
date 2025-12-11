@@ -1,7 +1,10 @@
 // upload-photo.js
 // API経由で写真をアップロードし、アプリ作成アルバムに追加する
 // usage:
-//   GOOGLE_CLIENT_ID=... GOOGLE_REFRESH_TOKEN=... PHOTOS_ALBUM_ID=... node upload-photo.js ./test.jpg
+//   node upload-photo.js ./test.jpg
+//   (.envファイルから環境変数を読み込みます)
+
+require("dotenv").config();
 
 const fs = require("fs");
 const path = require("path");
@@ -15,7 +18,7 @@ const FILE_PATH = process.argv[2];
 
 if (!CLIENT_ID || !CLIENT_SECRET || !REFRESH_TOKEN || !ALBUM_ID || !FILE_PATH) {
   console.error("Usage: node upload-photo.js <path-to-image>");
-  console.error("Ensures env vars: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN, PHOTOS_ALBUM_ID");
+  console.error("Ensures .env file with: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN, PHOTOS_ALBUM_ID");
   process.exit(1);
 }
 

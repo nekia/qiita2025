@@ -7,6 +7,33 @@ yarn-error.log*
 yarn.lock
 pnpm-lock.yaml
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+cython_debug/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
 # Environment variables
 .env
 .env.local
@@ -69,3 +96,5 @@ coverage/
 # Optional: Excalidraw files (uncomment if you don't want to commit)
 # *.excalidraw
 
+credentials/
+creds/
