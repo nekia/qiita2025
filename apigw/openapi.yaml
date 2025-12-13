@@ -1,0 +1,33 @@
+swagger: "2.0"
+info:
+  title: line-webhook-gateway
+  description: LINE webhook ingress to Cloud Run
+  version: 1.0.0
+host: line-webhook-gateway-162530971346.apigateway.asia-northeast1.cloud.goog
+schemes:
+  - https
+produces:
+  - application/json
+consumes:
+  - application/json
+paths:
+  /callback:
+    post:
+      summary: LINE webhook callback endpoint
+      operationId: callback
+      parameters:
+        - name: X-Line-Signature
+          in: header
+          required: false
+          type: string
+          description: LINE webhook signature for validation
+      x-google-backend:
+        # Cloud Runのルートを指定し、path_translationで/callbackを付与する
+        address: https://line-webhook-162530971346.asia-northeast1.run.app
+        protocol: h2
+        path_translation: APPEND_PATH_TO_ADDRESS
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object

@@ -1,0 +1,13 @@
+{
+    "name": "line-webhook",
+    "version": "1.0.0",
+    "main": "index.js",
+    "type": "commonjs",
+    "scripts": { "start": "node index.js" },
+    "dependencies": {
+      "@google-cloud/firestore": "^7.0.0",
+      "@line/bot-sdk": "^9.0.0",
+      "express": "^4.19.2"
+    }
+  }
+  
