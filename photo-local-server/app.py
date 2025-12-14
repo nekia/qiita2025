@@ -1,8 +1,9 @@
 import os
 import time
+import json
 import logging
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request, Response, stream_with_context
 from flask_cors import CORS
 from google.oauth2 import service_account
 from google.auth.transport.requests import Request as GoogleRequest
@@ -16,8 +17,12 @@ app = Flask(__name__)
 CORS(app)  # 開発環境：すべてのオリジンを許可
 
 # ===== 設定値 =====
-# Cloud Run のベース URL（例: https://photos-api-xxxxx-an.a.run.app）
-CLOUD_RUN_URL = os.environ.get("CLOUD_RUN_URL", "https://<your-service>-<region>.run.app")
+# Cloud Run のベース URL
+PHOTO_API_URL = os.environ.get(
+    "PHOTO_API_URL",
+    os.environ.get("CLOUD_RUN_URL", "https://<photo-api>-<region>.run.app"),
+)
+KIOSK_URL = os.environ.get("KIOSK_URL", "https://<kiosk-gateway>-<region>.run.app")
 
 # サービスアカウントキー(JSON)のパス
 SA_KEY_PATH = os.environ.get("SA_KEY_PATH", "/opt/kiosk/creds/sa.json")
@@ -28,47 +33,42 @@ TOKEN_EXP_MARGIN = 300
 # ==================
 
 
-# ===== IDトークンのキャッシュ用 変数 =====
-_cached_token: str | None = None
-_cached_expiry_ts: float = 0.0  # epoch 秒
-# =====================================
+# ===== IDトークンのキャッシュ用 変数 (audience別) =====
+_token_cache: dict[str, tuple[str, float]] = {}  # audience -> (token, expiry_ts)
+# ====================================================
 
 
-def get_id_token() -> str:
+def get_id_token(audience: str) -> str:
     """
     Cloud Run 呼び出し用の ID トークンを取得する。
     - キャッシュ済みで有効期限が十分残っていれば再利用
     - 期限が近い／切れていれば再取得
     """
-    global _cached_token, _cached_expiry_ts
-
     now = time.time()
-
-    # キャッシュ済み & 有効期限まで余裕がある場合は再利用
-    if _cached_token is not None and now < (_cached_expiry_ts - TOKEN_EXP_MARGIN):
-        return _cached_token
+    cached = _token_cache.get(audience)
+    if cached:
+        token, exp_ts = cached
+        if now < (exp_ts - TOKEN_EXP_MARGIN):
+            return token
 
     # 新しくトークンを取得
     credentials = service_account.IDTokenCredentials.from_service_account_file(
         SA_KEY_PATH,
-        target_audience=CLOUD_RUN_URL,
+        target_audience=audience,
     )
     credentials.refresh(GoogleRequest())
 
-    _cached_token = credentials.token
+    token = credentials.token
 
     # expiry は datetime.datetime 型なので epoch に変換
     if credentials.expiry is not None:
-        _cached_expiry_ts = credentials.expiry.timestamp()
+        exp_ts = credentials.expiry.timestamp()
     else:
-        # expiry が取れないケースはほぼありませんが、念のため短めにしておく
-        _cached_expiry_ts = now + 600  # 10 分
+        exp_ts = now + 600  # 10 分（fallback）
 
-    app.logger.info(
-        f"ID token refreshed. Expires at epoch={_cached_expiry_ts} (now={now})"
-    )
-
-    return _cached_token
+    _token_cache[audience] = (token, exp_ts)
+    app.logger.info(f"ID token refreshed for {audience}. exp={exp_ts} now={now}")
+    return token
 
 
 @app.route("/api/photos", methods=["GET"])
@@ -78,7 +78,7 @@ def proxy_photos():
     ここで Cloud Run の /api/photos にプロキシする。
     """
     try:
-        id_token = get_id_token()
+        id_token = get_id_token(PHOTO_API_URL)
 
         headers = {
             "Authorization": f"Bearer {id_token}"
@@ -86,7 +86,7 @@ def proxy_photos():
 
         # Cloud Run 側の /api/photos を呼び出す
         resp = requests.get(
-            f"{CLOUD_RUN_URL}/api/photos",
+            f"{PHOTO_API_URL}/api/photos",
             headers=headers,
             timeout=10,
         )
@@ -104,6 +104,40 @@ def proxy_photos():
     except Exception as e:
         app.logger.exception("Error while proxying /api/photos")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/sse", methods=["GET"])
+def proxy_sse():
+    """
+    SSE を Cloud Run の /sse に透過中継する。
+    ブラウザは http://localhost:8080/sse?deviceId=...&since=... に接続。
+    """
+    if not request.args.get("deviceId"):
+        return jsonify({"error": "deviceId is required"}), 400
+
+    def generate():
+        try:
+            token = get_id_token(KIOSK_URL)
+            with requests.get(
+                f"{KIOSK_URL}/sse",
+                params=request.args,
+                headers={
+                    "Accept": "text/event-stream",
+                    "Authorization": f"Bearer {token}",
+                },
+                stream=True,
+                timeout=30,
+            ) as r:
+                for line in r.iter_lines(decode_unicode=True):
+                    if line is None:
+                        continue
+                    # そのまま転送
+                    yield line + "\n"
+        except Exception as e:
+            app.logger.exception("SSE proxy error")
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype="text/event-stream")
 
 
 @app.route("/")

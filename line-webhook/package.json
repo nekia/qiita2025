@@ -6,6 +6,7 @@
     "scripts": { "start": "node index.js" },
     "dependencies": {
       "@google-cloud/firestore": "^7.0.0",
+      "@google-cloud/pubsub": "^4.4.0",
       "@line/bot-sdk": "^9.0.0",
       "express": "^4.19.2"
     }

@@ -1,6 +1,7 @@
 const express = require("express");
-const { validateSignature } = require("@line/bot-sdk");
+const { validateSignature, Client } = require("@line/bot-sdk");
 const { Firestore } = require("@google-cloud/firestore");
+const { PubSub } = require("@google-cloud/pubsub");
 
 const app = express();
 
@@ -9,6 +10,9 @@ const projectId = process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT;
 const databaseId = process.env.FIRESTORE_DATABASE_ID || "(default)";
 const db = new Firestore({ projectId, databaseId });
 console.log(`Firestore init project=${projectId} db=${databaseId}`);
+
+const pubsubTopic = process.env.PUBSUB_TOPIC || "kiosk-events";
+const pubsub = new PubSub({ projectId });
 
 // ミドルウェアを事前に作成
 const rawBodyParser = express.raw({ type: "application/json" });
@@ -30,6 +34,10 @@ const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
+const lineClient = new Client({
+  channelAccessToken: config.channelAccessToken,
+  channelSecret: config.channelSecret,
+});
 
 // 署名検証ミドルウェア（API Gateway経由の場合も対応）
 const signatureMiddleware = (req, res, next) => {
@@ -103,16 +111,102 @@ app.post("/callback", signatureMiddleware, async (req, res) => {
 
   await Promise.all(
     events.map(async (event) => {
-      if (event.type !== "message" || event.message.type !== "text") return;
+      if (!event.message || event.type !== "message" || event.message.type !== "text") return;
+
+      // 送信者の表示名取得（可能な場合のみ）
+      const source = event.source || {};
+      const getDisplayName = async () => {
+        if (!source.userId) return null;
+        try {
+          if (source.type === "group" && source.groupId) {
+            const prof = await lineClient.getGroupMemberProfile(
+              source.groupId,
+              source.userId
+            );
+            return prof.displayName;
+          }
+          if (source.type === "room" && source.roomId) {
+            const prof = await lineClient.getRoomMemberProfile(
+              source.roomId,
+              source.userId
+            );
+            return prof.displayName;
+          }
+          const prof = await lineClient.getProfile(source.userId);
+          return prof.displayName;
+        } catch (e) {
+          console.warn("displayName fetch failed", e.message);
+          return null;
+        }
+      };
+
+      const mentionees =
+        event.message?.mention?.mentionees?.map((m) => ({
+          userId: m.userId,
+          type: m.type,
+          index: m.index,
+          length: m.length,
+          isSelf: m.isSelf || false,
+        })) || [];
+
+      const isGroupOrRoom = source.type === "group" || source.type === "room";
+      const selfMentioned = mentionees.some((m) => m.isSelf === true);
+      const shouldPublish = isGroupOrRoom ? selfMentioned : source.type === "user";
+
+      const displayName = await getDisplayName();
 
       const doc = {
         text: event.message.text,
         timestamp: event.timestamp,
-        source: event.source, // groupId等も入る
+        timestampIso: new Date(event.timestamp).toISOString(),
+        source,
+        displayName,
+        userId: source.userId || null,
+        mentionees,
       };
 
-      // 最新メッセージを1件として保存（まずはこれ）
+      // 最新メッセージを更新
       await db.collection("kiosk").doc("latest").set(doc, { merge: true });
+      // 全メッセージを蓄積（自動IDで追加）
+      await db.collection("kiosk").doc("messages").collection("items").add(doc);
+
+      // Botがメンションされた場合のみ Pub/Sub publish
+      if (shouldPublish) {
+        const payload = {
+          eventId: event.message.id, // idempotency key
+          deviceId: process.env.DEVICE_ID || "home-parents-1",
+          type: "line_message",
+          occurredAt: new Date(event.timestamp).toISOString(),
+          payload: {
+            text: event.message.text,
+            senderName: displayName || null,
+            messageId: event.message.id,
+            groupId: source.groupId || null,
+          },
+        };
+        try {
+          await pubsub.topic(pubsubTopic).publishMessage({
+            json: payload,
+          });
+          console.log(
+            JSON.stringify({
+              severity: "INFO",
+              message: "published to pubsub",
+              topic: pubsubTopic,
+              eventId: payload.eventId,
+            })
+          );
+        } catch (err) {
+          console.error(
+            JSON.stringify({
+              severity: "ERROR",
+              message: "pubsub publish failed",
+              error: err.message,
+              eventId: payload.eventId,
+            })
+          );
+        }
+      }
     })
   );
 

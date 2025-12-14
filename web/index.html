@@ -430,10 +430,13 @@
     </div>
 
     <script>
+        const DEVICE_ID = "home-parents-1";
+        const PROXY_BASE = "http://localhost:8080";
+        const SINCE_KEY = "kiosk_since_ms";
+
         // ==========================
         // 仮の画像リスト（将来はサーバから取得）
         // ==========================
-        // ここをサーバから取得するように変更する
         let photoList = [];
         let currentPhotoIndex = 0;
         let slideShowTimer = null;
@@ -570,6 +573,60 @@
             topUnreadBadge.textContent = "✔ よみました";
             photoMessageIndicator.style.display = "none";
         }
+
+        // ==========================
+        // SSE (through local proxy)
+        // ==========================
+        const messageBody = document.getElementById("messageBody");
+        const senderNameEl = document.querySelector(".sender-name");
+        const messageTimeEl = document.querySelector(".message-time");
+        const topStatusText = document.getElementById("topStatusText");
+
+        function renderMessage(evt) {
+            const payload = evt.payload || {};
+            const text = payload.text || "";
+            const sender = payload.senderName || "（ななし）";
+            const createdAt = evt.createdAt ? new Date(evt.createdAt) : new Date();
+
+            messageBody.textContent = text;
+            senderNameEl.textContent = `${sender} から`;
+            messageTimeEl.textContent = createdAt.toLocaleString("ja-JP");
+            topStatusText.textContent = `さいごに更新: ${createdAt.toLocaleTimeString("ja-JP")}`;
+            topUnreadBadge.textContent = "🗨️ 新しいメッセージ";
+            photoMessageIndicator.style.display = "flex";
+        }
+
+        let eventSource = null;
+        function buildSseUrl() {
+            const params = new URLSearchParams({ deviceId: DEVICE_ID });
+            const since = localStorage.getItem(SINCE_KEY);
+            if (since) params.set("since", since);
+            return `${PROXY_BASE}/sse?${params.toString()}`;
+        }
+
+        function startEventStream() {
+            if (eventSource) eventSource.close();
+            const url = buildSseUrl();
+            eventSource = new EventSource(url);
+
+            eventSource.addEventListener("kiosk_event", (ev) => {
+                try {
+                    const data = JSON.parse(ev.data);
+                    renderMessage(data);
+                    const latest = data.createdAt || Date.now();
+                    localStorage.setItem(SINCE_KEY, latest);
+                } catch (err) {
+                    console.error("failed to handle event", err);
+                }
+            });
+
+            eventSource.onerror = (err) => {
+                console.error("sse error", err);
+                // backoff再接続は EventSource に任せる
+            };
+        }
+
+        startEventStream();
 
         // 初期表示：メッセージ画面（前回と同じ）
         setActiveScreen("message");
