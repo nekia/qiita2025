@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@google-cloud/firestore": "^7.0.0",
+    "@google/genai": "^1.33.0",
     "express": "^4.19.2"
   }
 }

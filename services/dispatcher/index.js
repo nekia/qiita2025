@@ -1,10 +1,16 @@
 const express = require("express");
 const { Firestore, FieldValue, Timestamp } = require("@google-cloud/firestore");
+const { GoogleGenAI } = require("@google/genai");
 
 const app = express();
 const firestore = new Firestore({
   projectId: process.env.FIRESTORE_PROJECT_ID,
   databaseId: process.env.FIRESTORE_DATABASE_ID || "(default)",
+});
+
+// Initialize Gemini AI client
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
 });
 
 app.use(express.json({ type: "application/json" }));
@@ -31,6 +37,7 @@ function parsePubSubPush(body) {
     err.status = 400;
     throw err;
   }
+
 
   const eventId = decoded.eventId;
   const deviceId = decoded.deviceId;
@@ -63,6 +70,60 @@ function toTimestamp(value) {
   return Timestamp.fromDate(date);
 }
 
+/**
+ * Generate binary choice response using Gemini API
+ * @param {string} message - The input message
+ * @returns {Promise<{choice1: string, choice2: string, reasoning: string}>}
+ */
+async function generateBinaryChoice(message) {
+  try {
+    const prompt = `以下のメッセージに対して、適切な2択の回答を生成してください。
+メッセージ: "${message}"
+
+以下のJSON形式で回答してください:
+{
+  "choice1": "選択肢1の内容",
+  "choice2": "選択肢2の内容",
+  "reasoning": "この2択を提案する理由"
+}
+
+2択は互いに対照的で、明確な違いがあるようにしてください。`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash-exp",
+      contents: prompt,
+    });
+
+    const text = response.text.trim();
+    
+    // Extract JSON from markdown code block if present
+    const jsonMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/) || text.match(/\{[\s\S]*\}/);
+    const jsonText = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;
+    
+    const parsed = JSON.parse(jsonText);
+    
+    return {
+      choice1: parsed.choice1 || "選択肢1",
+      choice2: parsed.choice2 || "選択肢2",
+      reasoning: parsed.reasoning || "理由なし",
+    };
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        severity: "ERROR",
+        message: "Gemini API call failed",
+        error: err.message,
+      })
+    );
+    // Return default choices if API fails
+    return {
+      choice1: "はい",
+      choice2: "いいえ",
+      reasoning: "API呼び出しに失敗したため、デフォルトの選択肢を返します",
+    };
+  }
+}
+
 app.post("/pubsub/push", async (req, res) => {
   let parsed;
   try {
@@ -81,6 +142,9 @@ app.post("/pubsub/push", async (req, res) => {
   const { eventId, deviceId, type, payload, occurredAt, line } = parsed;
   const docRef = firestore.doc(`devices/${deviceId}/events/${eventId}`);
 
+  // Generate binary choice using Gemini API
+  const binaryChoice = await generateBinaryChoice(payload.text);
+
   const doc = {
     eventId,
     deviceId,
@@ -89,6 +153,12 @@ app.post("/pubsub/push", async (req, res) => {
     payload,
     source: "line",
     line,
+    gemini: {
+      choice1: binaryChoice.choice1,
+      choice2: binaryChoice.choice2,
+      reasoning: binaryChoice.reasoning,
+      generatedAt: FieldValue.serverTimestamp(),
+    },
     occurredAt: toTimestamp(occurredAt),
     createdAt: FieldValue.serverTimestamp(),
   };
@@ -98,9 +168,11 @@ app.post("/pubsub/push", async (req, res) => {
     console.log(
       JSON.stringify({
         severity: "INFO",
-        message: "event saved",
+        message: "event saved with Gemini choices",
         eventId,
         deviceId,
+        choice1: binaryChoice.choice1,
+        choice2: binaryChoice.choice2,
       })
     );
     return res.status(204).send();

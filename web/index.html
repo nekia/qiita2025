@@ -1,14 +1,17 @@
 <!DOCTYPE html>
 <html lang="ja">
-
+<!--
+    Raspberry Pi の Chromium で絵文字を表示するには、以下のコマンドでフォントをインストールしてください：
+    
+    sudo apt-get update
+    sudo apt-get install fonts-noto-color-emoji
+    
+    インストール後、Chromium を再起動してください。
+-->
 <head>
     <meta charset="UTF-8" />
     <title>メッセージボード・フォトフレーム</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Noto Color Emoji フォント for Chromium -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap" rel="stylesheet">
     <style>
         /* ベース設定：FHD前提で文字をかなり大きめに */
         html,
@@ -17,13 +20,37 @@
             padding: 0;
             height: 100%;
             width: 100%;
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Yu Gothic", "Noto Sans JP", "Noto Color Emoji", sans-serif;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Yu Gothic", "Noto Sans JP", "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
             background-color: #2a2a2a;
+            /* 数字のフォントバリアントを無効化 */
+            font-variant-numeric: normal;
+            font-feature-settings: normal;
+            -webkit-font-feature-settings: normal;
         }
 
         body {
             display: flex;
             flex-direction: column;
+        }
+
+        /* 全ての要素で数字のスタイルを統一 */
+        * {
+            font-variant-numeric: normal !important;
+            font-feature-settings: normal !important;
+            -webkit-font-feature-settings: normal !important;
+        }
+
+        /* 絵文字を確実に表示させるための設定 */
+        @font-face {
+            font-family: 'EmojiFont';
+            src: local('Noto Color Emoji'),
+                 local('Segoe UI Emoji'),
+                 local('Apple Color Emoji'),
+                 local('Android Emoji'),
+                 local('Noto Emoji'),
+                 local('EmojiOne Color'),
+                 local('Twemoji Mozilla');
+            unicode-range: U+1F300-1F9FF, U+2600-26FF, U+2700-27BF;
         }
 
         /* レイアウト全体：上部バー + コンテンツ + 下部ナビ */
