@@ -3,6 +3,7 @@ const http = require("http");
 const https = require("https");
 const { URL } = require("url");
 const path = require("path");
+const { JWT } = require("google-auth-library");
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -10,6 +11,10 @@ const TARGET_BASE = process.env.TARGET_BASE || "https://<kiosk-gateway-url>";
 const PHOTO_API_BASE = process.env.PHOTO_API_BASE || "https://<photo-api-url>";
 const BEARER = process.env.PROXY_BEARER_TOKEN;
 const PHOTO_BEARER = process.env.PROXY_PHOTO_BEARER_TOKEN || BEARER;
+const KIOSK_SA_KEY_PATH = process.env.KIOSK_SA_KEY_PATH; // pi-kiosk-sa key (JSON)
+const PHOTO_SA_KEY_PATH = process.env.PHOTO_SA_KEY_PATH; // kiosk-tester key (JSON)
+const TOKEN_TTL_MS = Number(process.env.TOKEN_TTL_MS || 50 * 60 * 1000); // 50 minutes
+const TOKEN_MARGIN_MS = Number(process.env.TOKEN_MARGIN_MS || 60 * 1000); // 1 minute
 
 function safeUrl(base, path) {
   try {
@@ -19,7 +24,36 @@ function safeUrl(base, path) {
   }
 }
 
-app.get("/sse", (req, res) => {
+const tokenCache = new Map(); // key: `${keyPath}::${audience}` => { token, exp }
+
+async function getIdTokenCached(keyPath, audience) {
+  if (!keyPath || !audience) return null;
+  const cacheKey = `${keyPath}::${audience}`;
+  const now = Date.now();
+  const cached = tokenCache.get(cacheKey);
+  if (cached && now < cached.exp - TOKEN_MARGIN_MS) {
+    return cached.token;
+  }
+  try {
+    const client = new JWT({ keyFile: keyPath });
+    const token = await client.fetchIdToken(audience);
+    tokenCache.set(cacheKey, { token, exp: now + TOKEN_TTL_MS });
+    return token;
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        severity: "ERROR",
+        message: "id token fetch failed",
+        keyPath,
+        audience,
+        error: err.message,
+      })
+    );
+    return null;
+  }
+}
+
+app.get("/sse", async (req, res) => {
   const targetUrl = safeUrl(TARGET_BASE, "/sse");
   if (!targetUrl) {
     console.error(JSON.stringify({ severity: "ERROR", message: "invalid TARGET_BASE", value: TARGET_BASE }));
@@ -29,10 +63,11 @@ app.get("/sse", (req, res) => {
 
   const client = targetUrl.protocol === "https:" ? https : http;
 
-  const headers = {
-    Accept: "text/event-stream",
-  };
-  if (BEARER) headers.Authorization = `Bearer ${BEARER}`;
+  const headers = { Accept: "text/event-stream" };
+  const kioskBearer =
+    (await getIdTokenCached(KIOSK_SA_KEY_PATH, TARGET_BASE)) ||
+    BEARER;
+  if (kioskBearer) headers.Authorization = `Bearer ${kioskBearer}`;
 
   const upstreamReq = client.request(
     targetUrl,
@@ -62,7 +97,7 @@ app.get("/sse", (req, res) => {
   upstreamReq.end();
 });
 
-app.get("/api/photos", (req, res) => {
+app.get("/api/photos", async (req, res) => {
   const targetUrl = safeUrl(PHOTO_API_BASE, "/api/photos");
   if (!targetUrl) {
     console.error(JSON.stringify({ severity: "ERROR", message: "invalid PHOTO_API_BASE", value: PHOTO_API_BASE }));
@@ -72,7 +107,10 @@ app.get("/api/photos", (req, res) => {
 
   const client = targetUrl.protocol === "https:" ? https : http;
   const headers = {};
-  if (PHOTO_BEARER) headers.Authorization = `Bearer ${PHOTO_BEARER}`;
+  const photoBearer =
+    (await getIdTokenCached(PHOTO_SA_KEY_PATH, PHOTO_API_BASE)) ||
+    PHOTO_BEARER;
+  if (photoBearer) headers.Authorization = `Bearer ${photoBearer}`;
 
   const upstreamReq = client.request(
     targetUrl,
