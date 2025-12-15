@@ -598,6 +598,27 @@
         const topUnreadBadge = document.getElementById("topUnreadBadge");
         const photoMessageIndicator = document.getElementById("photoMessageIndicator");
         const responseStatus = document.getElementById("responseStatus");
+        const choiceButtons = {
+            primary: document.getElementById("btnOk"),
+            secondary: document.getElementById("btnCallLater"),
+        };
+        let currentChoices = {
+            choice1: "問題ありません",
+            choice2: "後ほど話します",
+            reasoning: "",
+        };
+
+        function applyChoiceButtons(choices) {
+            const c1 = choices.choice1 || "問題ありません";
+            const c2 = choices.choice2 || "後ほど話します";
+            currentChoices = {
+                choice1: c1,
+                choice2: c2,
+                reasoning: choices.reasoning || "",
+            };
+            choiceButtons.primary.textContent = `✅ ${c1}`;
+            choiceButtons.secondary.textContent = `📞 ${c2}`;
+        }
 
         function setActiveScreen(name) {
             Object.values(screens).forEach((el) => el.classList.remove("active"));
@@ -627,13 +648,13 @@
             setActiveScreen("photo");
         });
 
-        document.getElementById("btnOk").addEventListener("click", () => {
-            responseStatus.textContent = "「問題ありません」を送信しました。";
+        choiceButtons.primary.addEventListener("click", () => {
+            responseStatus.textContent = `「${currentChoices.choice1}」を送信しました。`;
             clearUnreadIndicators();
         });
 
-        document.getElementById("btnCallLater").addEventListener("click", () => {
-            responseStatus.textContent = "「後ほど話します」を送信しました。";
+        choiceButtons.secondary.addEventListener("click", () => {
+            responseStatus.textContent = `「${currentChoices.choice2}」を送信しました。`;
             clearUnreadIndicators();
         });
 
@@ -662,6 +683,7 @@
             const text = payload.text || "";
             const sender = payload.senderName || "（不明）";
             const createdAt = evt.createdAt ? new Date(evt.createdAt) : new Date();
+            const gemini = evt.gemini || {};
 
             messageBody.textContent = text;
             senderNameEl.textContent = `${sender}より`;
@@ -669,6 +691,7 @@
             topStatusText.textContent = `最終更新: ${createdAt.toLocaleTimeString("ja-JP")}`;
             topUnreadBadge.textContent = "🗨️ 新着メッセージ";
             photoMessageIndicator.style.display = "flex";
+            applyChoiceButtons(gemini);
         }
 
         let eventSource = null;

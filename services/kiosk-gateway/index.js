@@ -43,6 +43,7 @@ function writeEvent(res, doc) {
     occurredAt: toMillis(data.occurredAt),
     source: data.source,
     line: data.line,
+    gemini: data.gemini,
   };
   res.write(`event: kiosk_event\n`);
   res.write(`id: ${doc.id}\n`);
