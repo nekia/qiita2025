@@ -155,6 +155,9 @@ app.post("/callback", signatureMiddleware, async (req, res) => {
 
       const displayName = await getDisplayName();
 
+      const routeId =
+        source.groupId || source.roomId || source.userId || null;
+
       const doc = {
         text: event.message.text,
         timestamp: event.timestamp,
@@ -163,6 +166,10 @@ app.post("/callback", signatureMiddleware, async (req, res) => {
         displayName,
         userId: source.userId || null,
         mentionees,
+        messageId: event.message.id,
+        quoteToken: event.message.quoteToken || null,
+        routeId,
+        sourceType: source.type || null,
       };
 
       // 最新メッセージを更新
@@ -181,7 +188,12 @@ app.post("/callback", signatureMiddleware, async (req, res) => {
             text: event.message.text,
             senderName: displayName || null,
             messageId: event.message.id,
+            quoteToken: event.message.quoteToken || null,
             groupId: source.groupId || null,
+            roomId: source.roomId || null,
+            userId: source.userId || null,
+            routeId,
+            sourceType: source.type || null,
           },
         };
         try {

@@ -57,7 +57,12 @@ function parsePubSubPush(body) {
 
   const line = {};
   if (payload.groupId) line.groupId = payload.groupId;
+  if (payload.roomId) line.roomId = payload.roomId;
+  if (payload.userId) line.userId = payload.userId;
   if (payload.messageId) line.messageId = payload.messageId;
+  if (payload.quoteToken) line.quoteToken = payload.quoteToken;
+  if (payload.routeId) line.routeId = payload.routeId;
+  if (payload.sourceType) line.sourceType = payload.sourceType;
   if (payload.senderName) line.senderName = payload.senderName;
 
   return { eventId, deviceId, type, payload, occurredAt, line };

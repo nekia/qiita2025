@@ -649,13 +649,11 @@
         });
 
         choiceButtons.primary.addEventListener("click", () => {
-            responseStatus.textContent = `「${currentChoices.choice1}」を送信しました。`;
-            clearUnreadIndicators();
+            sendLineReply(currentChoices.choice1);
         });
 
         choiceButtons.secondary.addEventListener("click", () => {
-            responseStatus.textContent = `「${currentChoices.choice2}」を送信しました。`;
-            clearUnreadIndicators();
+            sendLineReply(currentChoices.choice2);
         });
 
         document.getElementById("btnPrevMsg").addEventListener("click", () => {
@@ -677,13 +675,30 @@
         const senderNameEl = document.querySelector(".sender-name");
         const messageTimeEl = document.querySelector(".message-time");
         const topStatusText = document.getElementById("topStatusText");
+        let currentLineContext = {
+            routeId: null,
+            quoteToken: null,
+            messageId: null,
+            sourceType: null,
+            senderName: null,
+        };
 
         function renderMessage(evt) {
             const payload = evt.payload || {};
+            const line = evt.line || {};
             const text = payload.text || "";
-            const sender = payload.senderName || "（不明）";
+            const sender = payload.senderName || line.senderName || "（不明）";
             const createdAt = evt.createdAt ? new Date(evt.createdAt) : new Date();
             const gemini = evt.gemini || {};
+
+            const routeId = line.routeId || line.groupId || line.roomId || line.userId || null;
+            currentLineContext = {
+                routeId,
+                quoteToken: line.quoteToken || null,
+                messageId: line.messageId || null,
+                sourceType: line.sourceType || line.type || null,
+                senderName: sender,
+            };
 
             messageBody.textContent = text;
             senderNameEl.textContent = `${sender}より`;
@@ -692,6 +707,42 @@
             topUnreadBadge.textContent = "🗨️ 新着メッセージ";
             photoMessageIndicator.style.display = "flex";
             applyChoiceButtons(gemini);
+        }
+
+        async function sendLineReply(choiceText) {
+            if (!currentLineContext.routeId) {
+                responseStatus.textContent = "送信先が不明です（routeIdなし）";
+                return;
+            }
+            const body = {
+                deviceId: DEVICE_ID,
+                text: choiceText,
+                line: currentLineContext,
+            };
+
+            responseStatus.textContent = "送信中...";
+            choiceButtons.primary.disabled = true;
+            choiceButtons.secondary.disabled = true;
+
+            try {
+                const res = await fetch(`${PROXY_BASE}/api/line/reply`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body),
+                });
+                if (!res.ok) {
+                    const errText = await res.text();
+                    throw new Error(`HTTP ${res.status}: ${errText}`);
+                }
+                responseStatus.textContent = `「${choiceText}」を送信しました。`;
+                clearUnreadIndicators();
+            } catch (err) {
+                console.error("failed to send reply", err);
+                responseStatus.textContent = `送信に失敗しました: ${err.message}`;
+            } finally {
+                choiceButtons.primary.disabled = false;
+                choiceButtons.secondary.disabled = false;
+            }
         }
 
         let eventSource = null;

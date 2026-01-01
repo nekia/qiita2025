@@ -6,6 +6,7 @@ const path = require("path");
 const { JWT } = require("google-auth-library");
 
 const app = express();
+app.use(express.json({ type: "application/json" }));
 const PORT = process.env.PORT || 8080;
 const TARGET_BASE = process.env.TARGET_BASE || "https://<kiosk-gateway-url>";
 const PHOTO_API_BASE = process.env.PHOTO_API_BASE || "https://<photo-api-url>";
@@ -94,6 +95,48 @@ app.get("/sse", async (req, res) => {
   });
 
   req.on("close", () => upstreamReq.destroy());
+  upstreamReq.end();
+});
+
+app.post("/api/line/reply", async (req, res) => {
+  const targetUrl = safeUrl(TARGET_BASE, "/line/reply");
+  if (!targetUrl) {
+    console.error(JSON.stringify({ severity: "ERROR", message: "invalid TARGET_BASE", value: TARGET_BASE }));
+    return res.status(500).json({ error: "proxy not configured (TARGET_BASE invalid)" });
+  }
+
+  const client = targetUrl.protocol === "https:" ? https : http;
+  const kioskBearer =
+    (await getIdTokenCached(KIOSK_SA_KEY_PATH, TARGET_BASE)) ||
+    BEARER;
+  const bodyStr = JSON.stringify(req.body || {});
+  const headers = {
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(bodyStr),
+  };
+  if (kioskBearer) headers.Authorization = `Bearer ${kioskBearer}`;
+
+  const upstreamReq = client.request(
+    targetUrl,
+    {
+      method: "POST",
+      headers,
+    },
+    (upstreamRes) => {
+      res.writeHead(upstreamRes.statusCode || 500, upstreamRes.headers);
+      upstreamRes.pipe(res);
+    }
+  );
+
+  upstreamReq.on("error", (err) => {
+    console.error(JSON.stringify({ severity: "ERROR", message: "reply proxy error", error: err.message }));
+    if (!res.headersSent) {
+      res.writeHead(502, { "Content-Type": "application/json" });
+    }
+    res.end(JSON.stringify({ error: "reply proxy failed" }));
+  });
+
+  upstreamReq.write(bodyStr);
   upstreamReq.end();
 });
 
