@@ -754,9 +754,18 @@
         }
 
         function startEventStream() {
-            if (eventSource) eventSource.close();
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
             const url = buildSseUrl();
+            console.log("Connecting to SSE:", url);
             eventSource = new EventSource(url);
+
+            eventSource.addEventListener("open", () => {
+                console.log("SSE connection opened");
+                topStatusText.textContent = "接続中...";
+            });
 
             eventSource.addEventListener("kiosk_event", (ev) => {
                 try {
@@ -769,10 +778,32 @@
                 }
             });
 
-            eventSource.onerror = (err) => {
-                console.error("sse error", err);
-                // backoff再接続は EventSource に任せる
+            const errorHandler = (ev) => {
+                const state = eventSource?.readyState;
+                const stateText = state === 0 ? "CONNECTING" : state === 1 ? "OPEN" : state === 2 ? "CLOSED" : "UNKNOWN";
+                console.error("SSE error:", {
+                    readyState: state,
+                    stateText,
+                    url,
+                    event: ev
+                });
+                
+                // CLOSED状態の場合は接続が完全に閉じられた
+                if (state === 2) {
+                    topStatusText.textContent = "接続エラー: サーバーに接続できません";
+                    console.error("SSE connection closed. Check if proxy server is running and TARGET_BASE is configured correctly.");
+                    // 5秒後に再接続を試みる
+                    setTimeout(() => {
+                        console.log("Retrying SSE connection...");
+                        startEventStream();
+                    }, 5000);
+                } else {
+                    topStatusText.textContent = "接続中...";
+                }
             };
+            
+            eventSource.addEventListener("error", errorHandler);
+            eventSource.onerror = errorHandler;
         }
 
         startEventStream();
