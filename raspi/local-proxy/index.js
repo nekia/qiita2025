@@ -4,8 +4,10 @@ const https = require("https");
 const { URL } = require("url");
 const path = require("path");
 const { JWT } = require("google-auth-library");
+const cors = require("cors");
 
 const app = express();
+app.use(cors({ origin: true }));
 app.use(express.json({ type: "application/json" }));
 const PORT = process.env.PORT || 8080;
 const TARGET_BASE = process.env.TARGET_BASE || "https://<kiosk-gateway-url>";

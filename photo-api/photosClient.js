@@ -35,11 +35,11 @@ oAuth2Client.setCredentials({
 
 /**
  * Google Photos から写真一覧を取得する（REST API を直接使用）
- * とりあえず pageSize だけ指定したシンプルな実装。
+ * ページネーションに対応して、全ページを取得する。
  * - アルバム ID 指定があれば mediaItems.search
  * - なければ mediaItems.list
  */
-async function fetchPhotoItems({ pageSize = 25 } = {}) {
+async function fetchPhotoItems({ pageSize = 25, maxItems = null } = {}) {
   try {
     // アクセストークンを取得
     const { token } = await oAuth2Client.getAccessToken();
@@ -49,45 +49,123 @@ async function fetchPhotoItems({ pageSize = 25 } = {}) {
     }
 
     const baseUrl = "https://photoslibrary.googleapis.com/v1";
+    const allItems = [];
+    let nextPageToken = null;
+    let pageCount = 0;
     
-    // アルバムIDがあれば search
-    if (PHOTOS_ALBUM_ID) {
-      const response = await fetch(`${baseUrl}/mediaItems:search`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+    do {
+      // アルバムIDがあれば search
+      if (PHOTOS_ALBUM_ID) {
+        // pageSizeは数値として送信（最大100）
+        const effectivePageSize = Math.min(pageSize, 100);
+        const requestBody = {
           albumId: PHOTOS_ALBUM_ID,
-          pageSize: pageSize.toString(), // 文字列にするのが安全
-        }),
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Photos API error: ${response.status} ${response.statusText} - ${errorText}`);
+          pageSize: effectivePageSize,
+        };
+        
+        if (nextPageToken) {
+          requestBody.pageToken = nextPageToken;
+        }
+        
+        const response = await fetch(`${baseUrl}/mediaItems:search`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(requestBody),
+        });
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Photos API error: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+        
+        const data = await response.json();
+        // mediaItemsが存在しない場合は空配列として扱う（APIがプロパティを省略する場合がある）
+        const items = Array.isArray(data.mediaItems) ? data.mediaItems : [];
+        
+        // デバッグ: レスポンス構造を確認（全ページ）
+        console.log(`[photosClient] Page ${pageCount + 1} response:`, {
+          requestPageSize: effectivePageSize,
+          hasMediaItems: !!data.mediaItems,
+          mediaItemsLength: items.length,
+          hasNextPageToken: !!data.nextPageToken,
+          responseKeys: Object.keys(data),
+          // 最初のページのみ、実際のリクエストボディとレスポンスを確認
+          ...(pageCount === 0 ? {
+            requestBody: JSON.stringify(requestBody),
+            fullResponse: JSON.stringify(data, null, 2).substring(0, 1000),
+          } : {}),
+        });
+        
+        if (items.length > 0) {
+          allItems.push(...items);
+          console.log(`[photosClient] Page ${pageCount + 1}: Added ${items.length} items (total: ${allItems.length})`);
+        } else {
+          console.log(`[photosClient] Page ${pageCount + 1}: No items in response (items.length: ${items.length})`);
+        }
+        
+        nextPageToken = data.nextPageToken || null;
+        pageCount++;
+        
+        // maxItemsが指定されている場合は制限をチェック
+        if (maxItems && allItems.length >= maxItems) {
+          break;
+        }
+      } else {
+        // ライブラリ全体から取得
+        let url = `${baseUrl}/mediaItems?pageSize=${pageSize}`;
+        if (nextPageToken) {
+          url += `&pageToken=${encodeURIComponent(nextPageToken)}`;
+        }
+        
+        const response = await fetch(url, {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+          },
+        });
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Photos API error: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+        
+        const data = await response.json();
+        // mediaItemsが存在しない場合は空配列として扱う（APIがプロパティを省略する場合がある）
+        const items = Array.isArray(data.mediaItems) ? data.mediaItems : [];
+        
+        // デバッグ: レスポンス構造を確認（各ページ）
+        if (pageCount < 2) { // 最初の2ページのみ詳細ログ
+          console.log(`[photosClient] Page ${pageCount + 1} response (list):`, {
+            hasMediaItems: !!data.mediaItems,
+            mediaItemsLength: items.length,
+            hasNextPageToken: !!data.nextPageToken,
+            responseKeys: Object.keys(data),
+          });
+        }
+        
+        if (items.length > 0) {
+          allItems.push(...items);
+          if (pageCount < 2) {
+            console.log(`[photosClient] Page ${pageCount + 1}: Added ${items.length} items (total: ${allItems.length})`);
+          }
+        }
+        
+        nextPageToken = data.nextPageToken || null;
+        pageCount++;
+        
+        // maxItemsが指定されている場合は制限をチェック
+        if (maxItems && allItems.length >= maxItems) {
+          break;
+        }
       }
-      
-      const data = await response.json();
-      return data.mediaItems || [];
-    } else {
-      // ライブラリ全体から取得
-      const response = await fetch(`${baseUrl}/mediaItems?pageSize=${pageSize}`, {
-        method: "GET",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-        },
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Photos API error: ${response.status} ${response.statusText} - ${errorText}`);
-      }
-      
-      const data = await response.json();
-      return data.mediaItems || [];
-    }
+    } while (nextPageToken && (!maxItems || allItems.length < maxItems));
+    
+    console.log(`[photosClient] Fetched ${allItems.length} items across ${pageCount} page(s)`);
+    
+    return allItems;
   } catch (err) {
     console.error("Error in fetchPhotoItems:", err);
     return [];
@@ -98,10 +176,14 @@ async function fetchPhotoItems({ pageSize = 25 } = {}) {
  * フロントエンド向けに整形した写真リストを返す
  */
 async function listPhotosForFrontend() {
-  const items = await fetchPhotoItems({ pageSize: 30 });
+  // pageSizeを100に設定して効率的に取得（APIの最大値）
+  const items = await fetchPhotoItems({ pageSize: 100 });
+  
+  // デバッグ: 取得したアイテム数を確認
+  console.log("[photosClient] Fetched items count:", items.length);
 
   // Cloud Run → フロントへ返す用のシンプルな形に変換
-  return items
+  const filtered = items
     .filter((m) => m && m.baseUrl)
     .map((m) => {
       // FHD 相当のサイズ指定 (w1920-h1080)
@@ -115,6 +197,11 @@ async function listPhotosForFrontend() {
           : "Google フォト",
       };
     });
+  
+  // デバッグ: フィルタリング後の数を確認
+  console.log("[photosClient] Filtered items count:", filtered.length);
+  
+  return filtered;
 }
 
 module.exports = {
