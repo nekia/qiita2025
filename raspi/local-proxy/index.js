@@ -101,11 +101,14 @@ app.get("/sse", async (req, res) => {
 });
 
 app.post("/api/line/reply", async (req, res) => {
+  console.log(JSON.stringify({ severity: "INFO", message: "POST /api/line/reply received", body: req.body }));
   const targetUrl = safeUrl(TARGET_BASE, "/line/reply");
   if (!targetUrl) {
     console.error(JSON.stringify({ severity: "ERROR", message: "invalid TARGET_BASE", value: TARGET_BASE }));
     return res.status(500).json({ error: "proxy not configured (TARGET_BASE invalid)" });
   }
+
+  console.log(JSON.stringify({ severity: "INFO", message: "Proxying to upstream", url: targetUrl.toString() }));
 
   const client = targetUrl.protocol === "https:" ? https : http;
   const kioskBearer =
@@ -125,17 +128,23 @@ app.post("/api/line/reply", async (req, res) => {
       headers,
     },
     (upstreamRes) => {
+      console.log(JSON.stringify({ 
+        severity: "INFO", 
+        message: "Upstream response", 
+        statusCode: upstreamRes.statusCode,
+        headers: upstreamRes.headers 
+      }));
       res.writeHead(upstreamRes.statusCode || 500, upstreamRes.headers);
       upstreamRes.pipe(res);
     }
   );
 
   upstreamReq.on("error", (err) => {
-    console.error(JSON.stringify({ severity: "ERROR", message: "reply proxy error", error: err.message }));
+    console.error(JSON.stringify({ severity: "ERROR", message: "reply proxy error", error: err.message, stack: err.stack }));
     if (!res.headersSent) {
       res.writeHead(502, { "Content-Type": "application/json" });
     }
-    res.end(JSON.stringify({ error: "reply proxy failed" }));
+    res.end(JSON.stringify({ error: "reply proxy failed", details: err.message }));
   });
 
   upstreamReq.write(bodyStr);
