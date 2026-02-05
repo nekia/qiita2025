@@ -6,11 +6,9 @@ set -e
 # ===== 環境変数設定 =====
 # Cloud Run URLs
 export TARGET_BASE="${TARGET_BASE:-https://kiosk-gateway-h3bva5byfq-an.a.run.app}"
-export PHOTO_API_BASE="${PHOTO_API_BASE:-https://photo-api-mock-h3bva5byfq-an.a.run.app}"
 
 # サービスアカウントキーのパス（ラズパイ上のローカルファイルシステム）
 export KIOSK_SA_KEY_PATH="${KIOSK_SA_KEY_PATH:-/opt/kiosk/creds/kiosk-tester.json}"
-export PHOTO_SA_KEY_PATH="${PHOTO_SA_KEY_PATH:-/opt/kiosk/creds/pi-kiosk-sa.json}"
 
 # リスンポート
 export PORT="${PORT:-8080}"
@@ -24,17 +22,11 @@ echo "Starting local-proxy..."
 echo "  TARGET_BASE: $TARGET_BASE"
 echo "  PHOTO_API_BASE: $PHOTO_API_BASE"
 echo "  KIOSK_SA_KEY_PATH: $KIOSK_SA_KEY_PATH"
-echo "  PHOTO_SA_KEY_PATH: $PHOTO_SA_KEY_PATH"
 echo "  PORT: $PORT"
 
 # キーファイル存在確認
 if [ ! -f "$KIOSK_SA_KEY_PATH" ]; then
   echo "ERROR: KIOSK_SA_KEY_PATH not found: $KIOSK_SA_KEY_PATH"
-  exit 1
-fi
-
-if [ ! -f "$PHOTO_SA_KEY_PATH" ]; then
-  echo "ERROR: PHOTO_SA_KEY_PATH not found: $PHOTO_SA_KEY_PATH"
   exit 1
 fi
 

@@ -528,7 +528,11 @@
 
     <script>
         const DEVICE_ID = "home-parents-1";
-        const PROXY_BASE = "http://localhost:8080";
+        const DEFAULT_PROXY_BASE = "http://localhost:8080";
+        const PROXY_BASE =
+            location.protocol === "file:" || location.origin === "null"
+                ? DEFAULT_PROXY_BASE
+                : location.origin;
         const SINCE_KEY = "kiosk_since_ms";
 
         // ==========================
@@ -544,7 +548,7 @@
         // Cloud Run にデプロイしたURLをここに
         // ローカルなら "http://localhost:8080/api/photos"
         // const PHOTO_API_URL = "https://photo-api-mock-162530971346.asia-northeast1.run.app/api/photos";
-        const PHOTO_API_URL = "http://localhost:8080/api/photos";
+        const PHOTO_API_URL = `${PROXY_BASE}/api/photos`;
         
         async function fetchPhotos() {
             try {
@@ -568,12 +572,21 @@
             }
         }
 
+        function resolvePhotoUrl(url) {
+            if (!url) return "";
+            if (url.startsWith("/")) {
+                const base = PROXY_BASE.endsWith("/") ? PROXY_BASE.slice(0, -1) : PROXY_BASE;
+                return `${base}${url}`;
+            }
+            return url;
+        }
+
         function showPhoto(index) {
             if (!photoList.length) return;
             const photo = photoList[index % photoList.length];
             currentPhotoIndex = index % photoList.length;
 
-            photoImage.src = photo.url;
+            photoImage.src = resolvePhotoUrl(photo.url);
         }
 
         // 起動時に一回取得
@@ -785,34 +798,65 @@
         
         // 回答状態の管理（localStorageに保存）
         const REPLY_STORAGE_KEY = "kiosk_replies";
+        const replyStateCache = new Map();
         
         function getMessageId(evt) {
             return evt.eventId || evt.id || evt.line?.messageId || null;
         }
         
+        function normalizeReplyState(raw) {
+            if (!raw || typeof raw !== "object") return null;
+            const choiceText = raw.choiceText || raw.text || null;
+            if (!choiceText) return null;
+            const repliedAt = Number(raw.repliedAt) || null;
+            return {
+                choiceText,
+                repliedAt: repliedAt || Date.now(),
+            };
+        }
+        
         function getReplyState(messageId) {
             if (!messageId) return null;
             try {
+                if (replyStateCache.has(messageId)) {
+                    return replyStateCache.get(messageId);
+                }
                 const replies = JSON.parse(localStorage.getItem(REPLY_STORAGE_KEY) || "{}");
-                return replies[messageId] || null;
+                const state = replies[messageId] || null;
+                if (state) {
+                    replyStateCache.set(messageId, state);
+                }
+                return state;
             } catch (err) {
                 console.error("Failed to get reply state:", err);
                 return null;
             }
         }
         
-        function saveReplyState(messageId, choiceText) {
+        function saveReplyState(messageId, choiceText, repliedAt) {
             if (!messageId) return;
             try {
                 const replies = JSON.parse(localStorage.getItem(REPLY_STORAGE_KEY) || "{}");
                 replies[messageId] = {
                     choiceText,
-                    repliedAt: Date.now(),
+                    repliedAt: repliedAt || Date.now(),
                 };
                 localStorage.setItem(REPLY_STORAGE_KEY, JSON.stringify(replies));
+                replyStateCache.set(messageId, replies[messageId]);
             } catch (err) {
                 console.error("Failed to save reply state:", err);
             }
+        }
+        
+        function applyReplyStateFromEvent(evt) {
+            const messageId = getMessageId(evt);
+            if (!messageId) return null;
+            const replyState = normalizeReplyState(evt.reply);
+            if (replyState) {
+                saveReplyState(messageId, replyState.choiceText, replyState.repliedAt);
+                return replyState;
+            }
+            return null;
         }
 
         function addMessageToHistory(evt) {
@@ -835,6 +879,7 @@
                 // 最新のメッセージ（最後の要素）にインデックスを設定
                 currentMessageIndex = messageHistory.length - 1;
             }
+            applyReplyStateFromEvent(evt);
             updateUnansweredIndicators();
         }
 
@@ -890,7 +935,7 @@
             updateUnansweredIndicators();
             
             // 回答状態を確認して表示を更新
-            const replyState = getReplyState(messageId);
+            const replyState = applyReplyStateFromEvent(evt) || getReplyState(messageId);
             updateResponseUI(evt, replyState, gemini);
         }
         
@@ -1050,8 +1095,13 @@
                 // 回答状態を保存
                 saveReplyState(messageId, choiceText);
                 
-                // UIを更新（回答済み状態を表示）
+                // メモリ上の履歴にも反映
                 const evt = messageHistory[currentMessageIndex];
+                if (evt) {
+                    evt.reply = { choiceText, repliedAt: Date.now() };
+                }
+                
+                // UIを更新（回答済み状態を表示）
                 updateResponseUI(evt, { choiceText, repliedAt: Date.now() }, evt.gemini || {});
                 
                 updateUnansweredIndicators();

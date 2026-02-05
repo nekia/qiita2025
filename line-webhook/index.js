@@ -13,6 +13,7 @@ console.log(`Firestore init project=${projectId} db=${databaseId}`);
 
 const pubsubTopic = process.env.PUBSUB_TOPIC || "kiosk-events";
 const pubsub = new PubSub({ projectId });
+const PUBLISH_ALL_MESSAGES = process.env.PUBLISH_ALL_MESSAGES === "true";
 
 // ミドルウェアを事前に作成
 const rawBodyParser = express.raw({ type: "application/json" });
@@ -151,7 +152,11 @@ app.post("/callback", signatureMiddleware, async (req, res) => {
 
       const isGroupOrRoom = source.type === "group" || source.type === "room";
       const selfMentioned = mentionees.some((m) => m.isSelf === true);
-      const shouldPublish = isGroupOrRoom ? selfMentioned : source.type === "user";
+      const shouldPublish = PUBLISH_ALL_MESSAGES
+        ? true
+        : isGroupOrRoom
+          ? selfMentioned
+          : source.type === "user";
 
       const displayName = await getDisplayName();
 
@@ -177,7 +182,19 @@ app.post("/callback", signatureMiddleware, async (req, res) => {
       // 全メッセージを蓄積（自動IDで追加）
       await db.collection("kiosk").doc("messages").collection("items").add(doc);
 
-      // Botがメンションされた場合のみ Pub/Sub publish
+      console.log(
+        JSON.stringify({
+          severity: "INFO",
+          message: "publish decision",
+          sourceType: source.type || null,
+          isGroupOrRoom,
+          selfMentioned,
+          publishAll: PUBLISH_ALL_MESSAGES,
+          shouldPublish,
+        })
+      );
+
+      // Botがメンションされた場合のみ Pub/Sub publish（PUBLISH_ALL_MESSAGES=true なら常に publish）
       if (shouldPublish) {
         const payload = {
           eventId: event.message.id, // idempotency key

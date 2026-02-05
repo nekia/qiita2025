@@ -1,5 +1,5 @@
 const express = require("express");
-const { Firestore, Timestamp } = require("@google-cloud/firestore");
+const { Firestore, FieldValue, Timestamp } = require("@google-cloud/firestore");
 const { Client } = require("@line/bot-sdk");
 
 const app = express();
@@ -52,6 +52,14 @@ function toMillis(ts) {
 
 function writeEvent(res, doc) {
   const data = doc.data();
+  const rawReply = data.reply || data.replyState || null;
+  const reply =
+    rawReply && typeof rawReply === "object"
+      ? {
+          ...rawReply,
+          repliedAt: toMillis(rawReply.repliedAt) || rawReply.repliedAt || null,
+        }
+      : rawReply;
   const event = {
     id: doc.id,
     deviceId: data.deviceId,
@@ -63,6 +71,7 @@ function writeEvent(res, doc) {
     source: data.source,
     line: data.line,
     gemini: data.gemini,
+    reply,
   };
   res.write(`event: kiosk_event\n`);
   res.write(`id: ${doc.id}\n`);
@@ -206,6 +215,37 @@ app.post("/line/reply", async (req, res) => {
       to,
       usedQuoteToken: !!quoteToken,
     }));
+
+    // Firestoreに回答結果を保存（kiosk起動時の既読判定用）
+    if (deviceId && messageId) {
+      const replyRef = firestore.doc(`devices/${deviceId}/events/${messageId}`);
+      const replyPayload = {
+        choiceText: text,
+        repliedAt: FieldValue.serverTimestamp(),
+        source: "kiosk",
+      };
+      await replyRef.set(
+        {
+          status: "replied",
+          reply: replyPayload,
+          repliedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      console.log(JSON.stringify({
+        severity: "INFO",
+        message: "reply saved to firestore",
+        deviceId,
+        messageId,
+      }));
+    } else {
+      console.warn(JSON.stringify({
+        severity: "WARN",
+        message: "skip reply save (missing deviceId or messageId)",
+        deviceId,
+        messageId,
+      }));
+    }
 
     return res.status(200).json({ status: "ok", message: "reply sent" });
   } catch (err) {
