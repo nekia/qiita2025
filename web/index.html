@@ -99,6 +99,24 @@
         .top-bar__right {
             font-size: 1.8rem;
             opacity: 0.7;
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+        }
+
+        .top-bar__action {
+            font-size: 1.6rem;
+            padding: 0.4rem 0.9rem;
+            border-radius: 999px;
+            border: 2px solid #bbb;
+            background: #fff;
+            color: #444;
+            cursor: pointer;
+        }
+
+        .top-bar__action:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
 
         .content {
@@ -161,7 +179,7 @@
         }
 
         .message-time {
-            font-size: 1.95rem;
+            font-size: 3.9rem;
             color: #999;
         }
 
@@ -424,8 +442,10 @@
                     <span id="topUnreadBadgeText">新着メッセージ 1件</span>
                 </span>
             </div>
-            <div class="top-bar__right" id="topStatusText">
-                本日 11:30 最終更新
+            <div class="top-bar__right">
+                <button class="top-bar__action" id="btnEnableSound" type="button">
+                    🔈 音を有効化
+                </button>
             </div>
         </div>
 
@@ -534,6 +554,12 @@
                 ? DEFAULT_PROXY_BASE
                 : location.origin;
         const SINCE_KEY = "kiosk_since_ms";
+        const NOTIFY_SOUND_COOLDOWN_MS = 2000;
+        const NOTIFY_SOUND_HISTORY_CUTOFF_MS = 5 * 60 * 1000;
+        let audioCtx = null;
+        let audioUnlocked = false;
+        let audioWarned = false;
+        let lastBeepAt = 0;
 
         // ==========================
         // 仮の画像リスト（将来はサーバから取得）
@@ -544,6 +570,7 @@
         const slideIntervalMs = 15000;
 
         const photoImage = document.getElementById("photoImage");
+        const btnEnableSound = document.getElementById("btnEnableSound");
 
         // Cloud Run にデプロイしたURLをここに
         // ローカルなら "http://localhost:8080/api/photos"
@@ -591,6 +618,119 @@
 
         // 起動時に一回取得
         fetchPhotos();
+
+        function ensureAudioContext() {
+            if (!audioCtx) {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (!AudioCtx) return null;
+                audioCtx = new AudioCtx();
+            }
+            return audioCtx;
+        }
+
+        function unlockAudioContext() {
+            const ctx = ensureAudioContext();
+            if (!ctx) return;
+            if (ctx.state === "suspended") {
+                ctx.resume().catch(() => {});
+            }
+            audioUnlocked = true;
+        }
+
+        function updateSoundUi() {
+            if (!btnEnableSound) return;
+            const ctx = ensureAudioContext();
+            if (!ctx) {
+                btnEnableSound.textContent = "🔇 音声非対応";
+                btnEnableSound.disabled = true;
+                return;
+            }
+            if (audioUnlocked) {
+                btnEnableSound.textContent = "🔔 音ON";
+                btnEnableSound.disabled = true;
+                btnEnableSound.style.display = "none";
+                return;
+            }
+            btnEnableSound.textContent = "🔈 音を有効化";
+            btnEnableSound.disabled = false;
+            btnEnableSound.style.display = "inline-flex";
+        }
+
+        function playNotifyMelody() {
+            if (!audioUnlocked) {
+                updateSoundUi();
+                return;
+            }
+            const ctx = ensureAudioContext();
+            if (!ctx) {
+                if (!audioWarned) {
+                    console.warn("AudioContext is not supported in this browser.");
+                    audioWarned = true;
+                }
+                return;
+            }
+            const now = Date.now();
+            if (now - lastBeepAt < NOTIFY_SOUND_COOLDOWN_MS) return;
+            lastBeepAt = now;
+
+            const notes = [
+                { freq: 784, dur: 0.18 }, // G5
+                { freq: 988, dur: 0.18 }, // B5
+                { freq: 1175, dur: 0.22 }, // D6
+                { freq: 988, dur: 0.18 }, // B5
+                { freq: 1047, dur: 0.26 }, // C6
+            ];
+            const gap = 0.04;
+            let t = ctx.currentTime + 0.01;
+
+            notes.forEach((note) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = "sine";
+                osc.frequency.value = note.freq;
+                gain.gain.setValueAtTime(0.0001, t);
+                gain.gain.exponentialRampToValueAtTime(0.12, t + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.0001, t + note.dur);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(t);
+                osc.stop(t + note.dur + 0.02);
+                t += note.dur + gap;
+            });
+        }
+
+        function setupAudioUnlock() {
+            const unlock = () => {
+                unlockAudioContext();
+                updateSoundUi();
+                document.removeEventListener("click", unlock);
+                document.removeEventListener("touchstart", unlock);
+                document.removeEventListener("keydown", unlock);
+            };
+            document.addEventListener("click", unlock);
+            document.addEventListener("touchstart", unlock);
+            document.addEventListener("keydown", unlock);
+        }
+
+        setupAudioUnlock();
+        updateSoundUi();
+
+        if (btnEnableSound) {
+            btnEnableSound.addEventListener("click", () => {
+                unlockAudioContext();
+                playNotifyMelody();
+                updateSoundUi();
+            });
+        }
+
+        function parseEventTimeMs(value) {
+            if (!value) return null;
+            if (typeof value === "number") return value;
+            const num = Number(value);
+            if (!Number.isNaN(num)) return num;
+            const date = new Date(value);
+            return Number.isNaN(date.getTime()) ? null : date.getTime();
+        }
 
 
         function nextPhoto() {
@@ -781,7 +921,6 @@
         const senderNameEl = document.querySelector(".sender-name");
         const avatarEl = document.querySelector(".avatar");
         const messageTimeEl = document.querySelector(".message-time");
-        const topStatusText = document.getElementById("topStatusText");
         let currentLineContext = {
             routeId: null,
             quoteToken: null,
@@ -931,7 +1070,6 @@
             senderNameEl.textContent = senderMapped.displayName;
             if (avatarEl) avatarEl.textContent = senderMapped.avatar;
             messageTimeEl.textContent = createdAt.toLocaleString("ja-JP");
-            topStatusText.textContent = `最終更新: ${createdAt.toLocaleTimeString("ja-JP")}`;
             updateUnansweredIndicators();
             
             // 回答状態を確認して表示を更新
@@ -1058,6 +1196,30 @@
             }
         }
 
+        function isUnreadMessage(evt) {
+            if (!evt) return false;
+            const messageId = getMessageId(evt);
+            if (!messageId) return false;
+            const replyState = applyReplyStateFromEvent(evt) || getReplyState(messageId);
+            return !replyState;
+        }
+
+        function moveToNextUnreadMessage() {
+            if (messageHistory.length === 0) return;
+            for (let i = currentMessageIndex + 1; i < messageHistory.length; i += 1) {
+                if (isUnreadMessage(messageHistory[i])) {
+                    renderMessageByIndex(i);
+                    return;
+                }
+            }
+            for (let i = 0; i < currentMessageIndex; i += 1) {
+                if (isUnreadMessage(messageHistory[i])) {
+                    renderMessageByIndex(i);
+                    return;
+                }
+            }
+        }
+
         async function sendLineReply(choiceText) {
             if (!currentLineContext.routeId) {
                 responseStatus.textContent = "送信先が不明です（routeIdなし）";
@@ -1105,6 +1267,7 @@
                 updateResponseUI(evt, { choiceText, repliedAt: Date.now() }, evt.gemini || {});
                 
                 updateUnansweredIndicators();
+                moveToNextUnreadMessage();
             } catch (err) {
                 console.error("failed to send reply", err);
                 responseStatus.textContent = `送信に失敗しました: ${err.message}`;
@@ -1140,6 +1303,7 @@
                 eventSource.close();
                 eventSource = null;
             }
+            const connectionStartedAt = Date.now();
             
             // 履歴を読み込む場合は、既存の履歴をクリア
             if (loadHistory) {
@@ -1154,7 +1318,6 @@
 
             eventSource.addEventListener("open", () => {
                 console.log("SSE connection opened");
-                topStatusText.textContent = "接続中...";
             });
 
             // 初期メッセージの受信を追跡
@@ -1165,6 +1328,15 @@
             eventSource.addEventListener("kiosk_event", (ev) => {
                 try {
                     const data = JSON.parse(ev.data);
+                    const createdAtMs = parseEventTimeMs(data.createdAt);
+                    const isHistoryEvent =
+                        loadHistory &&
+                        createdAtMs !== null &&
+                        createdAtMs < connectionStartedAt - NOTIFY_SOUND_HISTORY_CUTOFF_MS;
+                    const isNewMessage = data.type === "line_message";
+                    if (!isHistoryEvent && isNewMessage) {
+                        playNotifyMelody();
+                    }
                     addMessageToHistory(data);
                     initialMessageCount++;
                     
@@ -1205,15 +1377,12 @@
                 
                 // CLOSED状態の場合は接続が完全に閉じられた
                 if (state === 2) {
-                    topStatusText.textContent = "接続エラー: サーバーに接続できません";
                     console.error("SSE connection closed. Check if proxy server is running and TARGET_BASE is configured correctly.");
                     // 5秒後に再接続を試みる
                     setTimeout(() => {
                         console.log("Retrying SSE connection...");
                         startEventStream();
                     }, 5000);
-                } else {
-                    topStatusText.textContent = "接続中...";
                 }
             };
             

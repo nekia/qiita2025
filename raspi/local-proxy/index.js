@@ -1,6 +1,7 @@
 const express = require("express");
 const http = require("http");
 const https = require("https");
+const { spawn } = require("child_process");
 const { URL } = require("url");
 const path = require("path");
 const fs = require("fs/promises");
@@ -11,13 +12,23 @@ const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json({ type: "application/json" }));
 const PORT = process.env.PORT || 8080;
-const TARGET_BASE = process.env.TARGET_BASE || "https://<kiosk-gateway-url>";
+const TARGET_BASE = process.env.TARGET_BASE ||
+ "https://<kiosk-gateway-url>";
 const BEARER = process.env.PROXY_BEARER_TOKEN;
 const KIOSK_SA_KEY_PATH = process.env.KIOSK_SA_KEY_PATH; // pi-kiosk-sa key (JSON)
 const PHOTO_DIR = process.env.PHOTO_DIR || path.join(__dirname, "..", "..", "photos");
 const PHOTO_BASE_PATH = "/local-photos";
 const TOKEN_TTL_MS = Number(process.env.TOKEN_TTL_MS || 50 * 60 * 1000); // 50 minutes
 const TOKEN_MARGIN_MS = Number(process.env.TOKEN_MARGIN_MS || 60 * 1000); // 1 minute
+const TAPE_LIGHT_SCRIPT =
+  process.env.SWITCHBOT_TAPE_LIGHT_SCRIPT ||
+  path.join(__dirname, "..", "..", "switchbot_tape_light.sh");
+const TAPE_LIGHT_DEVICE_ID = process.env.SWITCHBOT_TAPE_LIGHT_DEVICE_ID;
+const TAPE_LIGHT_SHELL = process.env.SWITCHBOT_TAPE_LIGHT_SHELL || "bash";
+const TAPE_LIGHT_BLINK_COUNT = Number(process.env.SWITCHBOT_TAPE_LIGHT_BLINK_COUNT || 3);
+const TAPE_LIGHT_BLINK_INTERVAL_MS = Number(process.env.SWITCHBOT_TAPE_LIGHT_BLINK_INTERVAL_MS || 400);
+const TAPE_LIGHT_COOLDOWN_MS = Number(process.env.SWITCHBOT_TAPE_LIGHT_COOLDOWN_MS || 3000);
+const HISTORY_UNREAD_CUTOFF_MS = Number(process.env.HISTORY_UNREAD_CUTOFF_MS || 5 * 60 * 1000);
 
 function safeUrl(base, path) {
   try {
@@ -29,6 +40,175 @@ function safeUrl(base, path) {
 
 const tokenCache = new Map(); // key: `${keyPath}::${audience}` => { token, exp }
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif"]);
+const unreadEventIds = new Set();
+let blinkLoopRunning = false;
+let tapeLightWarned = false;
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseSinceToMs(value) {
+  if (!value) return null;
+  const num = Number(value);
+  if (!Number.isNaN(num)) return num;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.getTime();
+}
+
+function isUnreadEvent(event) {
+  if (!event) return false;
+  if (event.status) return event.status !== "replied";
+  return !event.reply;
+}
+
+function isNewEvent(event) {
+  return event?.type === "line_message";
+}
+
+function ensureTapeLightConfigured() {
+  if (TAPE_LIGHT_DEVICE_ID) return true;
+  if (!tapeLightWarned) {
+    console.warn(
+      JSON.stringify({
+        severity: "WARN",
+        message: "tape light is disabled (SWITCHBOT_TAPE_LIGHT_DEVICE_ID not set)",
+      })
+    );
+    tapeLightWarned = true;
+  }
+  return false;
+}
+
+async function runTapeLightBlink(reason, eventId) {
+  if (!ensureTapeLightConfigured()) return;
+  const args = [
+    TAPE_LIGHT_SCRIPT,
+    "blink",
+    TAPE_LIGHT_DEVICE_ID,
+    String(TAPE_LIGHT_BLINK_COUNT),
+    String(TAPE_LIGHT_BLINK_INTERVAL_MS),
+  ];
+
+  await new Promise((resolve) => {
+    const child = spawn(TAPE_LIGHT_SHELL, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+    child.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    child.on("error", (err) => {
+      console.error(
+        JSON.stringify({
+          severity: "ERROR",
+          message: "tape light blink failed to start",
+          reason,
+          eventId,
+          error: err.message,
+        })
+      );
+      resolve();
+    });
+
+    child.on("close", (code) => {
+      if (code !== 0) {
+        console.error(
+          JSON.stringify({
+            severity: "ERROR",
+            message: "tape light blink failed",
+            reason,
+            eventId,
+            exitCode: code,
+            stdout: stdout.trim() || undefined,
+            stderr: stderr.trim() || undefined,
+          })
+        );
+      }
+      resolve();
+    });
+  });
+}
+
+function enqueueTapeLightBlink(reason) {
+  if (!ensureTapeLightConfigured()) return;
+  if (blinkLoopRunning) return;
+  blinkLoopRunning = true;
+  (async () => {
+    try {
+      while (unreadEventIds.size > 0) {
+        await runTapeLightBlink(reason);
+        if (unreadEventIds.size === 0) break;
+        await delay(TAPE_LIGHT_COOLDOWN_MS);
+      }
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          severity: "ERROR",
+          message: "tape light blink loop failed",
+          reason,
+          error: err.message,
+        })
+      );
+    } finally {
+      blinkLoopRunning = false;
+    }
+  })();
+}
+
+function addUnreadEvent(eventId) {
+  if (eventId) {
+    unreadEventIds.add(eventId);
+  } else {
+    unreadEventIds.add(`unknown-${Date.now()}`);
+  }
+  enqueueTapeLightBlink("unread_message");
+}
+
+function resolveUnreadEvent(eventId) {
+  if (!eventId) return;
+  unreadEventIds.delete(eventId);
+}
+
+function createSseTapper(onEvent) {
+  let buffer = "";
+  return (chunk) => {
+    buffer += chunk.toString("utf8");
+    buffer = buffer.replace(/\r\n/g, "\n");
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() || "";
+    for (const part of parts) {
+      const lines = part.split("\n");
+      let eventType = "message";
+      const dataLines = [];
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          eventType = line.slice("event:".length).trim();
+        } else if (line.startsWith("data:")) {
+          dataLines.push(line.slice("data:".length).trim());
+        }
+      }
+      if (eventType !== "kiosk_event" || dataLines.length === 0) continue;
+      const dataStr = dataLines.join("\n");
+      try {
+        const event = JSON.parse(dataStr);
+        onEvent?.(event);
+      } catch (err) {
+        console.error(
+          JSON.stringify({
+            severity: "ERROR",
+            message: "failed to parse kiosk_event",
+            error: err.message,
+          })
+        );
+      }
+    }
+  };
+}
 
 function encodePathSegments(relativePath) {
   return relativePath
@@ -101,6 +281,11 @@ app.get("/sse", async (req, res) => {
     return res.status(500).json({ error: "proxy not configured (TARGET_BASE invalid)" });
   }
   targetUrl.search = req.originalUrl.split("?")[1] || "";
+  const connectionStartedAt = Date.now();
+  const sinceMs = parseSinceToMs(req.query?.since);
+  const isHistoryLoad =
+    sinceMs !== null && sinceMs < connectionStartedAt - HISTORY_UNREAD_CUTOFF_MS;
+  let historyUnreadNotified = false;
 
   const client = targetUrl.protocol === "https:" ? https : http;
 
@@ -117,6 +302,27 @@ app.get("/sse", async (req, res) => {
       headers,
     },
     (upstreamRes) => {
+      const tapSse = createSseTapper((event) => {
+        if (!isUnreadEvent(event)) return;
+        const createdAtMs = parseSinceToMs(event.createdAt);
+        const isHistoryEvent =
+          isHistoryLoad &&
+          createdAtMs !== null &&
+          createdAtMs < connectionStartedAt - HISTORY_UNREAD_CUTOFF_MS;
+
+        if (isHistoryEvent && historyUnreadNotified) {
+          // history unread already noticed; still track for continuous blinking
+          addUnreadEvent(event.id);
+          return;
+        }
+
+        if (isHistoryEvent && !historyUnreadNotified) {
+          historyUnreadNotified = true;
+        }
+
+        addUnreadEvent(event.id);
+      });
+      upstreamRes.on("data", tapSse);
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -140,6 +346,10 @@ app.get("/sse", async (req, res) => {
 
 app.post("/api/line/reply", async (req, res) => {
   console.log(JSON.stringify({ severity: "INFO", message: "POST /api/line/reply received", body: req.body }));
+  const repliedMessageId = req.body?.line?.messageId;
+  if (repliedMessageId) {
+    resolveUnreadEvent(repliedMessageId);
+  }
   const targetUrl = safeUrl(TARGET_BASE, "/line/reply");
   if (!targetUrl) {
     console.error(JSON.stringify({ severity: "ERROR", message: "invalid TARGET_BASE", value: TARGET_BASE }));
