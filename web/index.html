@@ -1111,6 +1111,7 @@
             }
             applyReplyStateFromEvent(evt);
             updateUnansweredIndicators();
+            return !exists;
         }
 
         function normalizeSenderName(name) {
@@ -1493,10 +1494,10 @@
                         createdAtMs !== null &&
                         createdAtMs < connectionStartedAt - NOTIFY_SOUND_HISTORY_CUTOFF_MS;
                     const isNewMessage = data.type === "line_message";
-                    if (!isHistoryEvent && isNewMessage) {
+                    const wasAdded = addMessageToHistory(data);
+                    if (wasAdded && !isHistoryEvent && isNewMessage) {
                         playNotifyMelody();
                     }
-                    addMessageToHistory(data);
                     initialMessageCount++;
                     
                     // 初期メッセージ受信フラグを設定
