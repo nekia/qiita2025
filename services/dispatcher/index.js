@@ -51,7 +51,8 @@ function parsePubSubPush(body) {
     throw err;
   }
 
-  if (!payload.text) {
+  const hasImage = Boolean(payload.imageUrl || payload?.image?.url);
+  if (!payload.text && !hasImage) {
     payload.text = "(no text)";
   }
 
@@ -147,8 +148,11 @@ app.post("/pubsub/push", async (req, res) => {
   const { eventId, deviceId, type, payload, occurredAt, line } = parsed;
   const docRef = firestore.doc(`devices/${deviceId}/events/${eventId}`);
 
-  // Generate binary choice using Gemini API
-  const binaryChoice = await generateBinaryChoice(payload.text);
+  const isImageMessage =
+    payload.messageType === "image" || payload.imageUrl || payload?.image?.url;
+
+  // Generate binary choice using Gemini API (skip for image-only messages)
+  const binaryChoice = isImageMessage ? null : await generateBinaryChoice(payload.text);
 
   const doc = {
     eventId,
@@ -158,26 +162,28 @@ app.post("/pubsub/push", async (req, res) => {
     payload,
     source: "line",
     line,
-    gemini: {
+    occurredAt: toTimestamp(occurredAt),
+    createdAt: FieldValue.serverTimestamp(),
+  };
+  if (binaryChoice) {
+    doc.gemini = {
       choice1: binaryChoice.choice1,
       choice2: binaryChoice.choice2,
       reasoning: binaryChoice.reasoning,
       generatedAt: FieldValue.serverTimestamp(),
-    },
-    occurredAt: toTimestamp(occurredAt),
-    createdAt: FieldValue.serverTimestamp(),
-  };
+    };
+  }
 
   try {
     await docRef.set(doc, { merge: true });
     console.log(
       JSON.stringify({
         severity: "INFO",
-        message: "event saved with Gemini choices",
+        message: binaryChoice ? "event saved with Gemini choices" : "event saved",
         eventId,
         deviceId,
-        choice1: binaryChoice.choice1,
-        choice2: binaryChoice.choice2,
+        choice1: binaryChoice?.choice1,
+        choice2: binaryChoice?.choice2,
       })
     );
     return res.status(204).send();

@@ -20,6 +20,12 @@ const PHOTO_DIR = process.env.PHOTO_DIR || path.join(__dirname, "..", "..", "pho
 const PHOTO_BASE_PATH = "/local-photos";
 const TOKEN_TTL_MS = Number(process.env.TOKEN_TTL_MS || 50 * 60 * 1000); // 50 minutes
 const TOKEN_MARGIN_MS = Number(process.env.TOKEN_MARGIN_MS || 60 * 1000); // 1 minute
+const IMAGE_PROXY_HOST_ALLOWLIST = process.env.IMAGE_PROXY_HOST_ALLOWLIST || "";
+const ALLOWED_IMAGE_PROXY_HOSTS = new Set(["storage.googleapis.com"]);
+IMAGE_PROXY_HOST_ALLOWLIST.split(",")
+  .map((v) => v.trim())
+  .filter(Boolean)
+  .forEach((host) => ALLOWED_IMAGE_PROXY_HOSTS.add(host));
 const TAPE_LIGHT_SCRIPT =
   process.env.SWITCHBOT_TAPE_LIGHT_SCRIPT ||
   path.join(__dirname, ".", "switchbot_tape_light.sh");
@@ -36,6 +42,11 @@ function safeUrl(base, path) {
   } catch (err) {
     return null;
   }
+}
+
+function isAllowedImageProxyHost(hostname) {
+  if (ALLOWED_IMAGE_PROXY_HOSTS.has(hostname)) return true;
+  return hostname.endsWith(".googleapis.com");
 }
 
 const tokenCache = new Map(); // key: `${keyPath}::${audience}` => { token, exp }
@@ -428,6 +439,96 @@ app.get("/api/photos", async (req, res) => {
     );
     res.status(500).json({ error: "failed_to_list_local_photos" });
   }
+});
+
+app.get("/api/image-proxy", (req, res) => {
+  const rawUrl = req.query?.url;
+  if (!rawUrl || typeof rawUrl !== "string") {
+    return res.status(400).json({ error: "url query param is required" });
+  }
+
+  let targetUrl = null;
+  try {
+    targetUrl = new URL(rawUrl);
+  } catch (err) {
+    targetUrl = null;
+  }
+  if (!targetUrl || !["http:", "https:"].includes(targetUrl.protocol)) {
+    return res.status(400).json({ error: "invalid url" });
+  }
+  if (!isAllowedImageProxyHost(targetUrl.hostname)) {
+    return res.status(403).json({ error: "host not allowed" });
+  }
+
+  const sanitizedUrl = `${targetUrl.origin}${targetUrl.pathname}`;
+  const queryKeys = Array.from(targetUrl.searchParams.keys());
+  const hasV4Signature = targetUrl.searchParams.has("X-Goog-Signature");
+  const hasLegacySignature =
+    targetUrl.searchParams.has("Signature") ||
+    targetUrl.searchParams.has("GoogleAccessId");
+  const client = targetUrl.protocol === "https:" ? https : http;
+  const upstreamReq = client.request(
+    targetUrl,
+    { method: "GET", headers: { "User-Agent": "local-proxy" } },
+    (upstreamRes) => {
+      console.log(
+        JSON.stringify({
+          severity: "INFO",
+          message: "image proxy response",
+          statusCode: upstreamRes.statusCode,
+          url: sanitizedUrl,
+          contentType: upstreamRes.headers["content-type"],
+          queryKeys,
+          hasV4Signature,
+          hasLegacySignature,
+        })
+      );
+      const statusCode = upstreamRes.statusCode || 502;
+      const contentType =
+        upstreamRes.headers["content-type"] || "application/octet-stream";
+      const headers = {
+        "Content-Type": contentType,
+        "Cache-Control": "public, max-age=300",
+      };
+
+      if (statusCode >= 400) {
+        let body = "";
+        upstreamRes.on("data", (chunk) => {
+          if (body.length < 4096) {
+            body += chunk.toString("utf8");
+          }
+        });
+        upstreamRes.on("end", () => {
+          console.error(
+            JSON.stringify({
+              severity: "ERROR",
+              message: "image proxy error body",
+              statusCode,
+              url: sanitizedUrl,
+              contentType,
+              body: body.slice(0, 4096),
+            })
+          );
+          res.writeHead(statusCode, headers);
+          res.end(body);
+        });
+        return;
+      }
+
+      res.writeHead(statusCode, headers);
+      upstreamRes.pipe(res);
+    }
+  );
+
+  upstreamReq.on("error", (err) => {
+    console.error(JSON.stringify({ severity: "ERROR", message: "image proxy failed", error: err.message }));
+    if (!res.headersSent) {
+      res.writeHead(502, { "Content-Type": "application/json" });
+    }
+    res.end(JSON.stringify({ error: "image proxy failed" }));
+  });
+
+  upstreamReq.end();
 });
 
 app.use(PHOTO_BASE_PATH, express.static(PHOTO_DIR));

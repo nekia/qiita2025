@@ -2,6 +2,7 @@ const express = require("express");
 const { validateSignature, Client } = require("@line/bot-sdk");
 const { Firestore } = require("@google-cloud/firestore");
 const { PubSub } = require("@google-cloud/pubsub");
+const { Storage } = require("@google-cloud/storage");
 
 const app = express();
 
@@ -14,6 +15,10 @@ console.log(`Firestore init project=${projectId} db=${databaseId}`);
 const pubsubTopic = process.env.PUBSUB_TOPIC || "kiosk-events";
 const pubsub = new PubSub({ projectId });
 const PUBLISH_ALL_MESSAGES = process.env.PUBLISH_ALL_MESSAGES === "true";
+const LINE_IMAGE_BUCKET = process.env.LINE_IMAGE_BUCKET;
+const LINE_IMAGE_PREFIX = process.env.LINE_IMAGE_PREFIX || "line-images";
+const LINE_IMAGE_URL_TTL_HOURS = Number(process.env.LINE_IMAGE_URL_TTL_HOURS || 168);
+const storage = new Storage({ projectId });
 
 // ミドルウェアを事前に作成
 const rawBodyParser = express.raw({ type: "application/json" });
@@ -39,6 +44,57 @@ const lineClient = new Client({
   channelAccessToken: config.channelAccessToken,
   channelSecret: config.channelSecret,
 });
+
+function streamToBuffer(stream) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on("data", (chunk) => chunks.push(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+function detectImageExtension(contentType) {
+  const lower = String(contentType || "").toLowerCase();
+  if (lower.includes("png")) return ".png";
+  if (lower.includes("webp")) return ".webp";
+  if (lower.includes("gif")) return ".gif";
+  return ".jpg";
+}
+
+async function uploadLineImage(messageId) {
+  if (!LINE_IMAGE_BUCKET) {
+    throw new Error("LINE_IMAGE_BUCKET is not set");
+  }
+  const stream = await lineClient.getMessageContent(messageId);
+  const contentType =
+    stream?.headers?.["content-type"] ||
+    stream?.headers?.["Content-Type"] ||
+    "image/jpeg";
+  const ext = detectImageExtension(contentType);
+  const datePath = new Date().toISOString().slice(0, 10).replace(/-/g, "/");
+  const objectPath = `${LINE_IMAGE_PREFIX}/${datePath}/${messageId}${ext}`;
+  const buffer = await streamToBuffer(stream);
+  const file = storage.bucket(LINE_IMAGE_BUCKET).file(objectPath);
+  await file.save(buffer, {
+    resumable: false,
+    metadata: {
+      contentType,
+      cacheControl: "public, max-age=86400",
+    },
+  });
+  const [signedUrl] = await file.getSignedUrl({
+    action: "read",
+    version: "v4",
+    expires: Date.now() + LINE_IMAGE_URL_TTL_HOURS * 60 * 60 * 1000,
+  });
+  return {
+    url: signedUrl,
+    contentType,
+    bucket: LINE_IMAGE_BUCKET,
+    object: objectPath,
+  };
+}
 
 // 署名検証ミドルウェア（API Gateway経由の場合も対応）
 const signatureMiddleware = (req, res, next) => {
@@ -112,7 +168,10 @@ app.post("/callback", signatureMiddleware, async (req, res) => {
 
   await Promise.all(
     events.map(async (event) => {
-      if (!event.message || event.type !== "message" || event.message.type !== "text") return;
+      const messageType = event.message?.type;
+      const isTextMessage = messageType === "text";
+      const isImageMessage = messageType === "image";
+      if (!event.message || event.type !== "message" || (!isTextMessage && !isImageMessage)) return;
 
       // 送信者の表示名取得（可能な場合のみ）
       const source = event.source || {};
@@ -141,14 +200,15 @@ app.post("/callback", signatureMiddleware, async (req, res) => {
         }
       };
 
-      const mentionees =
-        event.message?.mention?.mentionees?.map((m) => ({
-          userId: m.userId,
-          type: m.type,
-          index: m.index,
-          length: m.length,
-          isSelf: m.isSelf || false,
-        })) || [];
+      const mentionees = isTextMessage
+        ? event.message?.mention?.mentionees?.map((m) => ({
+            userId: m.userId,
+            type: m.type,
+            index: m.index,
+            length: m.length,
+            isSelf: m.isSelf || false,
+          })) || []
+        : [];
 
       const isGroupOrRoom = source.type === "group" || source.type === "room";
       const selfMentioned = mentionees.some((m) => m.isSelf === true);
@@ -163,8 +223,30 @@ app.post("/callback", signatureMiddleware, async (req, res) => {
       const routeId =
         source.groupId || source.roomId || source.userId || null;
 
+      let imageInfo = null;
+      if (isImageMessage) {
+        try {
+          imageInfo = await uploadLineImage(event.message.id);
+        } catch (err) {
+          console.error(
+            JSON.stringify({
+              severity: "ERROR",
+              message: "line image upload failed",
+              error: err.message,
+              messageId: event.message.id,
+            })
+          );
+          return;
+        }
+      }
+
       const doc = {
-        text: event.message.text,
+        text: isTextMessage ? event.message.text : "",
+        messageType,
+        imageUrl: imageInfo?.url || null,
+        imageContentType: imageInfo?.contentType || null,
+        imageBucket: imageInfo?.bucket || null,
+        imageObject: imageInfo?.object || null,
         timestamp: event.timestamp,
         timestampIso: new Date(event.timestamp).toISOString(),
         source,
@@ -196,13 +278,18 @@ app.post("/callback", signatureMiddleware, async (req, res) => {
 
       // Botがメンションされた場合のみ Pub/Sub publish（PUBLISH_ALL_MESSAGES=true なら常に publish）
       if (shouldPublish) {
-        const payload = {
+      const payload = {
           eventId: event.message.id, // idempotency key
           deviceId: process.env.DEVICE_ID || "home-parents-1",
           type: "line_message",
           occurredAt: new Date(event.timestamp).toISOString(),
           payload: {
-            text: event.message.text,
+          text: isTextMessage ? event.message.text : "",
+          messageType,
+          imageUrl: imageInfo?.url || null,
+          imageContentType: imageInfo?.contentType || null,
+          imageBucket: imageInfo?.bucket || null,
+          imageObject: imageInfo?.object || null,
             senderName: displayName || null,
             messageId: event.message.id,
             quoteToken: event.message.quoteToken || null,

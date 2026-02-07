@@ -7,6 +7,7 @@
     "dependencies": {
       "@google-cloud/firestore": "^7.0.0",
       "@google-cloud/pubsub": "^4.4.0",
+    "@google-cloud/storage": "latest",
       "@line/bot-sdk": "^9.0.0",
       "express": "^4.19.2"
     }
