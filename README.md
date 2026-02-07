@@ -82,6 +82,51 @@ TARGET_BASE=$KIOSK_URL PORT=8080 node index.js
 ```
 - 将来 `PROXY_BEARER_TOKEN` を設定すると Authorization ヘッダを付与して中継。
 
+### Raspberry Pi への同期手順
+```sh
+# ローカルから同期（必要に応じてホスト/ディレクトリを上書き）
+RASPI_HOST=atsushi@192.168.3.22 \
+RASPI_BASE_DIR=/home/atsushi/kiosk \
+RASPI_CREDS_DIR=/opt/kiosk/creds \
+./raspi/deploy-to-pi.sh
+```
+
+```sh
+# ラズパイ側で反映
+ssh atsushi@192.168.3.22
+vi /home/atsushi/kiosk/ecosystem.config.js
+pm2 reload /home/atsushi/kiosk/ecosystem.config.js
+```
+
+```sh
+# .env が同期されているか確認
+cd /home/atsushi/kiosk/raspi/local-proxy
+ls -a
+cat .env
+```
+
+#### passphrase 入力を1回にする（ssh-agent）
+```sh
+# 初回だけ鍵を追加（WSL/Ubuntu想定）
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+
+# 以後、deploy-to-pi.sh 実行中の複数 ssh/rsync/scp で再入力が不要
+```
+
+```sh
+# agent に鍵が入っているか確認
+ssh-add -l
+```
+
+#### 同期時の注意事項
+- `deploy-to-pi.sh` は `rsync --delete` を使うため、ラズパイ側の不要ファイルは削除されます。
+- `node_modules` は同期されないので、ラズパイ側で `npm install` が必要です。
+- `.env` を PM2 で読む場合は `export`/`$VAR`/`$(...)` が無効です（固定値で記述）。
+- SA キーは `RASPI_CREDS_DIR` にコピーされるため、配置先と権限を確認してください。
+- `photos/` は大量転送になりやすいので、時間と回線に余裕があるときに実行します。
+- `ecosystem.config.js` を更新した場合は `pm2 reload kiosk-local-proxy` で反映が必要です。
+
 ### フロー概要
 1. line-webhook → Pub/Sub topic `kiosk-events`
 2. Pub/Sub push (OIDC) → dispatcher `/pubsub/push`

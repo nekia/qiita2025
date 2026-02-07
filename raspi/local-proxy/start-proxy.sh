@@ -3,6 +3,8 @@
 
 set -e
 
+source .env
+
 # ===== 環境変数設定 =====
 # Cloud Run URLs
 export TARGET_BASE="${TARGET_BASE:-https://kiosk-gateway-h3bva5byfq-an.a.run.app}"
@@ -20,7 +22,6 @@ export PORT="${PORT:-8080}"
 # ===== 起動前チェック =====
 echo "Starting local-proxy..."
 echo "  TARGET_BASE: $TARGET_BASE"
-echo "  PHOTO_API_BASE: $PHOTO_API_BASE"
 echo "  KIOSK_SA_KEY_PATH: $KIOSK_SA_KEY_PATH"
 echo "  PORT: $PORT"
 

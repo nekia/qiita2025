@@ -22,7 +22,7 @@ const TOKEN_TTL_MS = Number(process.env.TOKEN_TTL_MS || 50 * 60 * 1000); // 50 m
 const TOKEN_MARGIN_MS = Number(process.env.TOKEN_MARGIN_MS || 60 * 1000); // 1 minute
 const TAPE_LIGHT_SCRIPT =
   process.env.SWITCHBOT_TAPE_LIGHT_SCRIPT ||
-  path.join(__dirname, "..", "..", "switchbot_tape_light.sh");
+  path.join(__dirname, ".", "switchbot_tape_light.sh");
 const TAPE_LIGHT_DEVICE_ID = process.env.SWITCHBOT_TAPE_LIGHT_DEVICE_ID;
 const TAPE_LIGHT_SHELL = process.env.SWITCHBOT_TAPE_LIGHT_SHELL || "bash";
 const TAPE_LIGHT_BLINK_COUNT = Number(process.env.SWITCHBOT_TAPE_LIGHT_BLINK_COUNT || 3);

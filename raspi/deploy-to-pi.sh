@@ -22,12 +22,12 @@ echo "PROJECT_ROOT: $PROJECT_ROOT"
 echo ""
 
 # ===== 1. ラズパイ上にディレクトリ作成 =====
-echo "[1/4] Creating directories on Raspberry Pi..."
-ssh "$RASPI_HOST" "mkdir -p $RASPI_BASE_DIR/raspi/local-proxy $RASPI_BASE_DIR/web"
+echo "[1/5] Creating directories on Raspberry Pi..."
+ssh "$RASPI_HOST" "mkdir -p $RASPI_BASE_DIR/raspi/local-proxy $RASPI_BASE_DIR/web $RASPI_BASE_DIR/photos"
 ssh "$RASPI_HOST" "sudo mkdir -p $RASPI_CREDS_DIR && sudo chown $USER:$USER $RASPI_CREDS_DIR"
 
 # ===== 2. local-proxy のコードをコピー =====
-echo "[2/4] Copying local-proxy code..."
+echo "[2/5] Copying local-proxy code..."
 rsync -av --delete \
   "$PROJECT_ROOT/raspi/local-proxy/" \
   "$RASPI_HOST:$RASPI_BASE_DIR/raspi/local-proxy/" \
@@ -39,22 +39,20 @@ rsync -av --delete \
   "$PROJECT_ROOT/web/" \
   "$RASPI_HOST:$RASPI_BASE_DIR/web/"
 
-# ===== 4. SA キーをコピー（credentials/ 配下） =====
-echo "[4/4] Copying service account keys..."
+# ===== 4. photos のファイルをコピー =====
+echo "[4/5] Copying photos..."
+rsync -av --delete \
+  "$PROJECT_ROOT/photos/" \
+  "$RASPI_HOST:$RASPI_BASE_DIR/photos/"
+
+# ===== 5. SA キーをコピー（credentials/ 配下） =====
+echo "[5/5] Copying service account keys..."
 if [ -f "$PROJECT_ROOT/credentials/line-msg-kiosk-board-4ceb85a1da55-kiosk-tester.json" ]; then
   scp "$PROJECT_ROOT/credentials/line-msg-kiosk-board-4ceb85a1da55-kiosk-tester.json" \
     "$RASPI_HOST:$RASPI_CREDS_DIR/kiosk-tester.json"
   echo "  ✓ kiosk-tester.json"
 else
   echo "  ⚠ kiosk-tester.json not found (skipped)"
-fi
-
-if [ -f "$PROJECT_ROOT/credentials/line-msg-kiosk-board-e33fce1a6399-pi-kiosk-sa.json" ]; then
-  scp "$PROJECT_ROOT/credentials/line-msg-kiosk-board-e33fce1a6399-pi-kiosk-sa.json" \
-    "$RASPI_HOST:$RASPI_CREDS_DIR/pi-kiosk-sa.json"
-  echo "  ✓ pi-kiosk-sa.json"
-else
-  echo "  ⚠ pi-kiosk-sa.json not found (skipped)"
 fi
 
 echo ""
