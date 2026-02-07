@@ -105,6 +105,13 @@ ls -a
 cat .env
 ```
 
+#### ラズパイ側で写真を展開（スマホSSH用）
+```sh
+# 例: 先に scp/rsync で zip を置いたあとに実行
+cd /home/atsushi/kiosk/raspi
+./upload-photos-on-pi.sh /home/atsushi/photos/upload.zip /home/pi/photos
+```
+
 #### passphrase 入力を1回にする（ssh-agent）
 ```sh
 # 初回だけ鍵を追加（WSL/Ubuntu想定）
