@@ -168,6 +168,59 @@ sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority \
 ls /tmp/.X11-unix
 ```
 
+#### 直近の操作ログからのポイント
+```sh
+# ラズパイへ同期（ホスト/ディレクトリは必要に応じて変更）
+RASPI_HOST=atsushi@192.168.3.22 \
+RASPI_BASE_DIR=/home/atsushi/kiosk \
+RASPI_CREDS_DIR=/opt/kiosk/creds \
+./raspi/deploy-to-pi.sh
+```
+
+```sh
+# Cloud Run デプロイ（.env を読み込んでから）
+. line-webhook/.env
+./deploy-line-webhook.sh
+
+. services/dispatcher/.env
+./deploy-dispatcher.sh
+```
+
+```sh
+# local-proxy 起動（実行場所に注意）
+cd raspi/local-proxy
+KIOSK_SA_KEY_PATH=../../credentials/line-msg-kiosk-board-4ceb85a1da55-kiosk-tester.json ./start-proxy.sh
+```
+
+```sh
+# 8080 が使用中で起動できない場合
+ps auxw | grep node
+kill -15 <pid>
+# まだ残る場合のみ
+kill -9 <pid>
+```
+
+```sh
+# ラズパイ側で依存関係を反映
+cd /home/atsushi/kiosk/raspi/local-proxy
+npm install
+pm2 restart kiosk-local-proxy
+```
+
+```sh
+# Chromium を確実にリロード（認可エラーが出る場合はユーザー指定）
+export DISPLAY=:0
+export XAUTHORITY=/home/pi/.Xauthority
+xdotool search --onlyvisible --class Chromium windowactivate --sync key --clearmodifiers ctrl+r
+sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority \
+  xdotool search --onlyvisible --class Chromium windowactivate --sync key --clearmodifiers ctrl+r
+```
+
+- `./start-proxy.sh` はリポジトリ直下ではなく `raspi/local-proxy/` で実行する。
+- `pm2 restart` 実行時に環境変数を変更した場合は `--update-env` が必要。
+- 画像取得が `403 AccessDenied` の場合、使用しているサービスアカウントに
+  `storage.objects.get` が付与されているか確認する。
+
 #### 音出力に関するポイント
 - 音が出ない場合はまず出力先を HDMI に切り替える（`sudo raspi-config nonint do_audio 2`）。
 - `alsamixer` でミュート解除（`M`）と音量調整を行う。
