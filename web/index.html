@@ -183,10 +183,17 @@
             color: #999;
         }
 
+        .message-body-wrapper {
+            flex: 1 1 auto;
+            position: relative;
+            display: flex;
+        }
+
         .message-body {
             flex: 1 1 auto;
+            height: 52vh;
             margin: 0.5rem 0;
-            padding: 1.5rem 1rem;
+            padding: 1.5rem 6.5rem;
             border-radius: 0;
             background-color: #2a2a2a;
             border: none;
@@ -201,9 +208,17 @@
             gap: 1.5rem;
         }
 
+        .message-body--image-only .message-image {
+            max-height: 100%;
+        }
+
+        .message-body--has-text .message-image {
+            max-height: 60%;
+        }
+
         .message-image {
             width: 100%;
-            max-height: 45vh;
+            max-height: 100%;
             object-fit: contain;
             background-color: #1a1a1a;
             border-radius: 0.8rem;
@@ -235,6 +250,34 @@
             display: flex;
             gap: 1.5rem;
             justify-content: center;
+        }
+
+        .nav-buttons--overlay {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 1rem;
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        .nav-buttons--overlay .btn {
+            pointer-events: auto;
+        }
+
+        .response-status-overlay {
+            position: absolute;
+            left: 50%;
+            bottom: 0;
+            transform: translateX(-50%);
+            z-index: 3;
+            pointer-events: none;
+            background-color: rgba(26, 26, 26, 0.85);
+            padding: 0.4rem 1.2rem 0.6rem;
+            border-radius: 999px;
+            border: 1px solid #3a3a3a;
         }
 
         .btn {
@@ -295,6 +338,12 @@
         
         .btn-disabled:hover {
             background-color: #555;
+        }
+
+        .btn-selected {
+            border: 3px solid #b6f3b6;
+            box-shadow: 0 0 0 4px rgba(138, 182, 138, 0.35), 0 6px 12px rgba(0, 0, 0, 0.25);
+            transform: scale(1.02);
         }
 
         .status-text {
@@ -477,10 +526,23 @@
                         </div>
                         <div class="message-time">本日 11:25</div>
                     </div>
-                    <div class="message-body" id="messageBody">
-                        こんにちは。<br />
-                        今日の体調はいかがですか？<br /><br />
-                        後ほど電話してもよろしいですか？
+                    <div class="message-body-wrapper">
+                        <div class="message-body" id="messageBody">
+                            こんにちは。<br />
+                            今日の体調はいかがですか？<br /><br />
+                            後ほど電話してもよろしいですか？
+                        </div>
+                        <div class="nav-buttons nav-buttons--overlay">
+                            <button class="btn btn-secondary btn-disabled" id="btnPrevMsg" disabled>
+                                ⬅️ 前のメッセージ
+                            </button>
+                            <button class="btn btn-secondary btn-disabled" id="btnNextMsg" disabled>
+                                ➡️ 次のメッセージ
+                            </button>
+                        </div>
+                        <div class="status-text response-status-overlay" id="responseStatusIndicator" style="display: none;">
+                            <!-- 未回答/回答済みの状態を表示 -->
+                        </div>
                     </div>
 
                     <div class="message-footer">
@@ -498,17 +560,6 @@
                         <div class="status-text" id="responseStatus">
                             <!-- ここに「送信しました」などを表示 -->
                         </div>
-                        <div class="status-text" id="responseStatusIndicator" style="display: none;">
-                            <!-- 未回答/回答済みの状態を表示 -->
-                        </div>
-                        <div class="nav-buttons">
-                            <button class="btn btn-secondary btn-disabled" id="btnPrevMsg" disabled>
-                                ⬅️ 前のメッセージ
-                            </button>
-                            <button class="btn btn-secondary btn-disabled" id="btnNextMsg" disabled>
-                                ➡️ 次のメッセージ
-                            </button>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -524,40 +575,17 @@
                 </div>
             </div>
 
-            <!-- ホーム画面 -->
-            <div class="screen" id="screenHome">
-                <div class="panel" style="align-items:center; justify-content:center; text-align:center;">
-                    <div style="font-size:3.6rem; margin-bottom:2rem;">
-                        こんにちは
-                    </div>
-                    <div style="display:flex; flex-direction:column; gap:1.5rem;">
-                        <button class="btn btn-large btn-primary" id="btnHomeToMessage">
-                            🗨️ メッセージを見る
-                        </button>
-                        <button class="btn btn-large btn-secondary" id="btnHomeToPhoto">
-                            🖼️ 写真を見る
-                        </button>
-                    </div>
-                    <div style="margin-top:2rem; font-size:2.4rem; color:#999;">
-                        いずれかのボタンを<br />押してください
-                    </div>
-                </div>
-            </div>
         </div>
 
         <!-- 下部ナビ -->
         <div class="bottom-nav">
-            <button class="bottom-nav__button bottom-nav__button--active" id="navMessage">
+            <button class="bottom-nav__button" id="navMessage">
                 <span class="bottom-nav__icon">🗨️</span>
                 <span>メッセージ</span>
             </button>
-            <button class="bottom-nav__button" id="navPhoto">
+            <button class="bottom-nav__button bottom-nav__button--active" id="navPhoto">
                 <span class="bottom-nav__icon">🖼️</span>
                 <span>写真を見る</span>
-            </button>
-            <button class="bottom-nav__button" id="navHome">
-                <span class="bottom-nav__icon">🏠</span>
-                <span>ホーム</span>
             </button>
         </div>
     </div>
@@ -821,7 +849,6 @@
         const screens = {
             message: document.getElementById("screenMessage"),
             photo: document.getElementById("screenPhoto"),
-            home: document.getElementById("screenHome"),
         };
 
         const MESSAGE_IDLE_TIMEOUT_MS = 60 * 1000;
@@ -856,7 +883,6 @@
         const bottomNavButtons = {
             message: document.getElementById("navMessage"),
             photo: document.getElementById("navPhoto"),
-            home: document.getElementById("navHome"),
         };
 
         const topUnreadBadge = document.getElementById("topUnreadBadge");
@@ -917,14 +943,6 @@
 
         bottomNavButtons.message.addEventListener("click", () => setActiveScreen("message"));
         bottomNavButtons.photo.addEventListener("click", () => setActiveScreen("photo"));
-        bottomNavButtons.home.addEventListener("click", () => setActiveScreen("home"));
-
-        document.getElementById("btnHomeToMessage").addEventListener("click", () => {
-            setActiveScreen("message");
-        });
-        document.getElementById("btnHomeToPhoto").addEventListener("click", () => {
-            setActiveScreen("photo");
-        });
 
         ["pointerdown", "touchstart", "keydown"].forEach((eventName) => {
             document.addEventListener(eventName, () => {
@@ -1111,6 +1129,7 @@
             if (normalized === "たなか ゆうこ") return { displayName: "ゆうこ", avatar: "ゆ" };
             if (lower === "kenichi") return { displayName: "けんいち", avatar: "け" };
             if (normalized === "根木 教男") return { displayName: "のりお", avatar: "の" };
+            if (normalized === "田中 誉大") return { displayName: "たかひろ", avatar: "た" };
 
             // フォールバック: そのまま表示、アバターは先頭1文字
             const displayName = normalized || "（不明）";
@@ -1146,6 +1165,7 @@
             const hasImage = Boolean(imageUrl);
             const hasText = Boolean(text && text.trim());
             messageBody.innerHTML = "";
+            messageBody.classList.remove("message-body--image-only", "message-body--has-text");
 
             if (hasImage) {
                 const proxyUrl = buildImageProxyUrl(imageUrl);
@@ -1170,6 +1190,12 @@
 
             if (!hasImage && !hasText) {
                 messageBody.textContent = "（メッセージ本文なし）";
+            }
+
+            if (hasImage && !hasText) {
+                messageBody.classList.add("message-body--image-only");
+            } else if (hasImage && hasText) {
+                messageBody.classList.add("message-body--has-text");
             }
         }
 
@@ -1220,6 +1246,7 @@
                 allButtons.forEach((btn) => {
                     btn.style.opacity = "1";
                     btn.style.border = "";
+                    btn.classList.remove("btn-selected");
                 });
             };
             
@@ -1227,8 +1254,8 @@
                 // 回答済みの場合
                 responseStatus.textContent = "";
                 responseStatusIndicator.style.display = "block";
-                responseStatusIndicator.className = "status-text response-status-answered";
-                responseStatusIndicator.textContent = `✅ 回答済み: 「${replyState.choiceText}」`;
+                responseStatusIndicator.className = "status-text response-status-overlay response-status-answered";
+                responseStatusIndicator.textContent = "✅ 回答済み";
                 
                 // ボタンを無効化
                 allButtons.forEach((btn) => {
@@ -1253,7 +1280,7 @@
                     allButtons.forEach((btn, idx) => {
                         if (idx === selectedIndex) {
                             btn.style.opacity = "1";
-                            btn.style.border = "2px solid #8ab68a";
+                            btn.classList.add("btn-selected");
                         } else {
                             btn.style.opacity = "0.5";
                         }
@@ -1263,7 +1290,7 @@
                 // 未回答の場合
                 responseStatus.textContent = "";
                 responseStatusIndicator.style.display = "block";
-                responseStatusIndicator.className = "status-text response-status-unanswered";
+                responseStatusIndicator.className = "status-text response-status-overlay response-status-unanswered";
                 responseStatusIndicator.innerHTML = '<span class="unanswered-badge">未回答</span><span>回答をお待ちしています</span>';
                 
                 // ボタンを有効化
@@ -1525,8 +1552,8 @@
         // 初回接続時は過去1週間のメッセージを読み込む
         startEventStream(true);
 
-        // 初期表示：メッセージ画面
-        setActiveScreen("message");
+        // 初期表示：フォトフレーム画面
+        setActiveScreen("photo");
         
         // ナビゲーションボタンの初期状態を設定
         updateNavigationButtons();

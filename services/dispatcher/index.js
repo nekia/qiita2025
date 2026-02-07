@@ -83,7 +83,7 @@ function toTimestamp(value) {
  */
 async function generateBinaryChoice(message) {
   try {
-    const prompt = `以下のメッセージに対して、適切な2択の回答を生成してください。
+    const prompt = `以下のメッセージに対して、適切な短めの2択の回答を生成してください。できるだけ20文字以内にしてください。
 メッセージ: "${message}"
 
 以下のJSON形式で回答してください:
@@ -93,7 +93,8 @@ async function generateBinaryChoice(message) {
   "reasoning": "この2択を提案する理由"
 }
 
-2択は互いに対照的で、明確な違いがあるようにしてください。`;
+2択は互いに対照的で、明確な違いがあるようにしてください。
+回答者は80代のアナログ世代に女性であり、投稿者の母親もしくは祖母です。`;
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
@@ -130,6 +131,94 @@ async function generateBinaryChoice(message) {
   }
 }
 
+function extractImageUrl(payload) {
+  return payload?.imageUrl || payload?.image?.url || null;
+}
+
+async function fetchImageInlineData(imageUrl) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(imageUrl, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`image fetch failed: ${response.status}`);
+    }
+    const contentType = response.headers.get("content-type") || "image/jpeg";
+    if (!contentType.startsWith("image/")) {
+      throw new Error(`invalid image content-type: ${contentType}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    const base64Data = Buffer.from(arrayBuffer).toString("base64");
+    return { inlineData: { mimeType: contentType, data: base64Data } };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Generate binary choice response from image using Gemini API
+ * @param {string} imageUrl - The image URL
+ * @param {string} message - Optional text message
+ * @returns {Promise<{choice1: string, choice2: string, reasoning: string}>}
+ */
+async function generateBinaryChoiceFromImage(imageUrl, message) {
+  try {
+    const promptLines = [
+      "以下の画像を読み取って、言いそうな短めの感想を2つ生成してください。できるだけ20文字以内にしてください。",
+      "画像の内容を踏まえ、互いに対照的で明確な違いがある感想にしてください。",
+      "回答者は80代のアナログ世代に女性であり、投稿者の母親もしくは祖母です。",
+      "",
+    ];
+    if (message && message !== "(no text)") {
+      promptLines.push(`補足テキスト: "${message}"`, "");
+    }
+    promptLines.push(
+      "以下のJSON形式で回答してください:",
+      "{",
+      '  "choice1": "選択肢1の内容",',
+      '  "choice2": "選択肢2の内容",',
+      '  "reasoning": "この2択を提案する理由"',
+      "}"
+    );
+    const prompt = promptLines.join("\n");
+    const imagePart = await fetchImageInlineData(imageUrl);
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: prompt }, imagePart],
+        },
+      ],
+    });
+
+    const text = response.text.trim();
+    const jsonMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/) || text.match(/\{[\s\S]*\}/);
+    const jsonText = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;
+    const parsed = JSON.parse(jsonText);
+
+    return {
+      choice1: parsed.choice1 || "選択肢1",
+      choice2: parsed.choice2 || "選択肢2",
+      reasoning: parsed.reasoning || "理由なし",
+    };
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        severity: "ERROR",
+        message: "Gemini image API call failed",
+        error: err.message,
+      })
+    );
+    return {
+      choice1: "はい",
+      choice2: "いいえ",
+      reasoning: "画像解析に失敗したため、デフォルトの選択肢を返します",
+    };
+  }
+}
+
 app.post("/pubsub/push", async (req, res) => {
   let parsed;
   try {
@@ -151,8 +240,16 @@ app.post("/pubsub/push", async (req, res) => {
   const isImageMessage =
     payload.messageType === "image" || payload.imageUrl || payload?.image?.url;
 
-  // Generate binary choice using Gemini API (skip for image-only messages)
-  const binaryChoice = isImageMessage ? null : await generateBinaryChoice(payload.text);
+  // Generate binary choice using Gemini API (use image understanding for image posts)
+  let binaryChoice = null;
+  if (isImageMessage) {
+    const imageUrl = extractImageUrl(payload);
+    if (imageUrl) {
+      binaryChoice = await generateBinaryChoiceFromImage(imageUrl, payload.text);
+    }
+  } else {
+    binaryChoice = await generateBinaryChoice(payload.text);
+  }
 
   const doc = {
     eventId,
