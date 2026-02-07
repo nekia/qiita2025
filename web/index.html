@@ -674,28 +674,42 @@
             lastBeepAt = now;
 
             const notes = [
-                { freq: 784, dur: 0.18 }, // G5
-                { freq: 988, dur: 0.18 }, // B5
-                { freq: 1175, dur: 0.22 }, // D6
-                { freq: 988, dur: 0.18 }, // B5
-                { freq: 1047, dur: 0.26 }, // C6
+                { freq: 880, dur: 0.32 }, // A5
+                { freq: 660, dur: 0.32 }, // E5
+                { freq: 1046, dur: 0.36 }, // C6
+                { freq: 880, dur: 0.32 }, // A5
+                { freq: 660, dur: 0.32 }, // E5
+                { freq: 1175, dur: 0.42 }, // D6
             ];
-            const gap = 0.04;
-            let t = ctx.currentTime + 0.01;
+            const gap = 0.08;
+            const masterGain = ctx.createGain();
+            const compressor = ctx.createDynamicsCompressor();
+            masterGain.gain.value = 0.32;
+            compressor.threshold.setValueAtTime(-18, ctx.currentTime);
+            compressor.ratio.setValueAtTime(8, ctx.currentTime);
+            compressor.attack.setValueAtTime(0.003, ctx.currentTime);
+            compressor.release.setValueAtTime(0.2, ctx.currentTime);
+            masterGain.connect(compressor);
+            compressor.connect(ctx.destination);
 
-            notes.forEach((note) => {
+            let t = ctx.currentTime + 0.01;
+            notes.forEach((note, index) => {
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
-                osc.type = "sine";
+                osc.type = "triangle";
                 osc.frequency.value = note.freq;
                 gain.gain.setValueAtTime(0.0001, t);
-                gain.gain.exponentialRampToValueAtTime(0.12, t + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.25, t + 0.03);
                 gain.gain.exponentialRampToValueAtTime(0.0001, t + note.dur);
                 osc.connect(gain);
-                gain.connect(ctx.destination);
+                gain.connect(masterGain);
                 osc.start(t);
-                osc.stop(t + note.dur + 0.02);
+                osc.stop(t + note.dur + 0.04);
                 t += note.dur + gap;
+
+                if (index === 2) {
+                    t += 0.18;
+                }
             });
         }
 
@@ -794,6 +808,35 @@
             home: document.getElementById("screenHome"),
         };
 
+        const MESSAGE_IDLE_TIMEOUT_MS = 60 * 1000;
+        let messageIdleTimer = null;
+
+        function isMessageScreenActive() {
+            return screens.message.classList.contains("active");
+        }
+
+        function stopMessageIdleTimer() {
+            if (messageIdleTimer) {
+                clearTimeout(messageIdleTimer);
+                messageIdleTimer = null;
+            }
+        }
+
+        function startMessageIdleTimer() {
+            stopMessageIdleTimer();
+            if (!isMessageScreenActive()) return;
+            messageIdleTimer = setTimeout(() => {
+                if (isMessageScreenActive()) {
+                    setActiveScreen("photo");
+                }
+            }, MESSAGE_IDLE_TIMEOUT_MS);
+        }
+
+        function resetMessageIdleTimer() {
+            if (!isMessageScreenActive()) return;
+            startMessageIdleTimer();
+        }
+
         const bottomNavButtons = {
             message: document.getElementById("navMessage"),
             photo: document.getElementById("navPhoto"),
@@ -848,6 +891,12 @@
             } else {
                 stopSlideShow();
             }
+
+            if (name === "message") {
+                startMessageIdleTimer();
+            } else {
+                stopMessageIdleTimer();
+            }
         }
 
         bottomNavButtons.message.addEventListener("click", () => setActiveScreen("message"));
@@ -860,6 +909,14 @@
         document.getElementById("btnHomeToPhoto").addEventListener("click", () => {
             setActiveScreen("photo");
         });
+
+        ["pointerdown", "touchstart", "keydown"].forEach((eventName) => {
+            document.addEventListener(eventName, () => {
+                resetMessageIdleTimer();
+            });
+        });
+
+        startMessageIdleTimer();
 
         choiceButtons.primary.addEventListener("click", () => {
             sendLineReply(currentChoices.choice1);

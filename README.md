@@ -127,6 +127,53 @@ ssh-add -l
 - `photos/` は大量転送になりやすいので、時間と回線に余裕があるときに実行します。
 - `ecosystem.config.js` を更新した場合は `pm2 reload kiosk-local-proxy` で反映が必要です。
 
+#### ラズパイ音量設定（通知音が小さい場合）
+```sh
+# 対話式で音量を上げる（推奨）
+alsamixer
+# F6でサウンドカード選択 → ↑/↓で音量調整、Mでミュート解除
+```
+
+```sh
+# コマンドで一気に上げる（どちらか有効な方）
+amixer sset Master 100% unmute
+amixer sset PCM 100% unmute
+```
+
+```sh
+# 現在の音量を確認
+amixer sget Master
+```
+
+※ HDMI 先のディスプレイ側にも音量設定がある場合は別途調整してください。
+
+#### ラズパイでブラウザをコマンドラインからリロード
+```sh
+# まず X の DISPLAY を指定（SSH/cron から実行する場合は必須）
+export DISPLAY=:0
+export XAUTHORITY=/home/pi/.Xauthority
+
+# Chromium を前面にして Ctrl+R を送る
+xdotool search --onlyvisible --class chromium windowactivate --sync key --clearmodifiers ctrl+r
+```
+
+```sh
+# うまくいかない場合はログインユーザーで実行
+sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority \
+  xdotool search --onlyvisible --class chromium windowactivate --sync key --clearmodifiers ctrl+r
+```
+
+```sh
+# DISPLAY 番号が違う場合は確認
+ls /tmp/.X11-unix
+```
+
+#### 音出力に関するポイント
+- 音が出ない場合はまず出力先を HDMI に切り替える（`sudo raspi-config nonint do_audio 2`）。
+- `alsamixer` でミュート解除（`M`）と音量調整を行う。
+- `amixer sset Master/PCM 100% unmute` で一括設定できる。
+- ディスプレイ側の音量/ミュートも確認する。
+
 ### フロー概要
 1. line-webhook → Pub/Sub topic `kiosk-events`
 2. Pub/Sub push (OIDC) → dispatcher `/pubsub/push`
