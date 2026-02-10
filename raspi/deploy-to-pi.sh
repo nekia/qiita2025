@@ -7,6 +7,7 @@ set -e
 RASPI_HOST="${RASPI_HOST:-pi@raspberrypi.local}"
 RASPI_BASE_DIR="${RASPI_BASE_DIR:-/home/pi/kiosk}"
 RASPI_CREDS_DIR="${RASPI_CREDS_DIR:-/opt/kiosk/creds}"
+PIUSER="${PIUSER:-atsushi}"
 
 # ローカルのディレクトリパス（このスクリプトの位置から相対）
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -24,7 +25,7 @@ echo ""
 # ===== 1. ラズパイ上にディレクトリ作成 =====
 echo "[1/5] Creating directories on Raspberry Pi..."
 ssh "$RASPI_HOST" "mkdir -p $RASPI_BASE_DIR/raspi/local-proxy $RASPI_BASE_DIR/web $RASPI_BASE_DIR/photos"
-ssh "$RASPI_HOST" "sudo mkdir -p $RASPI_CREDS_DIR && sudo chown $USER:$USER $RASPI_CREDS_DIR"
+ssh "$RASPI_HOST" "sudo mkdir -p $RASPI_CREDS_DIR && sudo chown $PIUSER:$PIUSER $RASPI_CREDS_DIR"
 
 # ===== 2. local-proxy のコードをコピー =====
 echo "[2/5] Copying local-proxy code..."
