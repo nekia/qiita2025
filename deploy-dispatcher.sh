@@ -2,19 +2,29 @@
 
 REGION=${REGION:-asia-northeast1}
 PROJECT_ID=${PROJECT_ID:-line-msg-kiosk-board}
+SERVICE_NAME=${SERVICE_NAME:-dispatcher}
+SERVICE_ACCOUNT_EMAIL=${SERVICE_ACCOUNT_EMAIL:-}
 FIRESTORE_DATABASE_ID=${FIRESTORE_DATABASE_ID:-line-msg-store}
 SECRET_NAME=${SECRET_NAME:-gemini-api-key}
 PUBSUB_TOPIC=${PUBSUB_TOPIC:-kiosk-events}
 PUBSUB_SUBSCRIPTION=${PUBSUB_SUBSCRIPTION:-kiosk-events-dispatcher}
 
-gcloud run deploy dispatcher \
-    --source ./services/dispatcher \
-    --region $REGION \
-    --set-env-vars FIRESTORE_PROJECT_ID=$PROJECT_ID,FIRESTORE_DATABASE_ID=$FIRESTORE_DATABASE_ID \
-    --update-secrets=GEMINI_API_KEY=$SECRET_NAME:latest \
-    --allow-unauthenticated
+DEPLOY_ARGS=(
+  --source ./services/dispatcher
+  --project "$PROJECT_ID"
+  --region "$REGION"
+  --set-env-vars "FIRESTORE_PROJECT_ID=$PROJECT_ID,FIRESTORE_DATABASE_ID=$FIRESTORE_DATABASE_ID"
+  --update-secrets "GEMINI_API_KEY=$SECRET_NAME:latest"
+  --allow-unauthenticated
+)
 
-DISPATCHER_URL=$(gcloud run services describe dispatcher --region $REGION --project $PROJECT_ID --format='value(status.url)')
+if [ -n "$SERVICE_ACCOUNT_EMAIL" ]; then
+  DEPLOY_ARGS+=(--service-account "$SERVICE_ACCOUNT_EMAIL")
+fi
+
+gcloud run deploy "$SERVICE_NAME" "${DEPLOY_ARGS[@]}"
+
+DISPATCHER_URL=$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')
 echo "Dispatcher URL: $DISPATCHER_URL"
 
 # Ensure Pub/Sub push subscription exists for dispatcher

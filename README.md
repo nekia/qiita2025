@@ -5,6 +5,7 @@
 - `services/kiosk-gateway/` Firestoreポーリング → SSE
 - `raspi/local-proxy/` localhostでSSE中継（将来Bearer追加可）
 - `web/` 最小UI（EventSourceで表示）
+- `infra/terraform/` GCPインフラを環境別（production/development）に管理するIaC
 
 ### 事前設定
 ```sh
@@ -13,6 +14,19 @@ REGION=asia-northeast1
 TOPIC=kiosk-events
 SUB=kiosk-dispatcher-sub
 PUBSUB_SA=pubsub-push@$PROJECT_ID.iam.gserviceaccount.com
+```
+
+### productionとdevelopmentを同居させる時の注意
+- `deploy-*.sh` は `SERVICE_NAME` を指定しないと既存の production サービス名を使います。
+- development を同一プロジェクトに作る場合は、必ず `*-dev` の名前を指定してください。
+
+```sh
+# 例: line-webhook を dev 名でデプロイ
+SERVICE_NAME=line-webhook-dev \
+FIRESTORE_DATABASE_ID=line-msg-store-dev \
+PUBSUB_TOPIC=kiosk-events-dev \
+LINE_IMAGE_BUCKET=kiosk-line-image-dev \
+./deploy-line-webhook.sh
 ```
 
 ### GCPリソース
