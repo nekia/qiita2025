@@ -138,6 +138,18 @@ variable "secret_name_line_channel_secret" {
   default     = "line_channel_secret"
 }
 
+variable "line_webhook_allow_unauthenticated" {
+  description = "Allow unauthenticated invocation for line-webhook. Prefer false and use API Gateway for LINE webhook (Gateway allows unauthenticated; backend stays IAM-only)."
+  type        = bool
+  default     = false
+}
+
+variable "kiosk_gateway_allow_unauthenticated" {
+  description = "Allow unauthenticated invocation for kiosk-gateway (useful for dev kiosk / laptop testing)."
+  type        = bool
+  default     = false
+}
+
 variable "dispatcher_allow_unauthenticated" {
   description = "Allow unauthenticated invocation for dispatcher service."
   type        = bool
@@ -174,6 +186,12 @@ variable "cloud_run_timeout_seconds" {
   default     = 300
 }
 
+variable "cloud_run_deletion_protection" {
+  description = "Deletion protection flag for Cloud Run services."
+  type        = bool
+  default     = false
+}
+
 variable "create_artifact_registry_repository" {
   description = "If true, create Artifact Registry repository for service images."
   type        = bool
@@ -205,9 +223,15 @@ variable "github_repo_name" {
 }
 
 variable "github_branch_regex" {
-  description = "Regex for GitHub branch push trigger."
+  description = "Regex for GitHub branch push trigger (used in push-based triggers)."
   type        = string
   default     = "^main$"
+}
+
+variable "github_branch_name" {
+  description = "Branch name for source_to_build and git_file_source."
+  type        = string
+  default     = "main"
 }
 
 variable "cloud_build_static_tag" {

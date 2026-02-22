@@ -1,0 +1,19 @@
+createTime: '2026-02-21T09:24:55.486304242Z'
+filename: cloudbuild/build-service-image.yaml
+github:
+  name: qiita2025
+  owner: nekia
+  push:
+    branch: ^main$
+id: 8bba59b4-83c5-47ee-91b3-1a457fe89360
+includedFiles:
+- services/dispatcher/**
+name: dispatcher-build-development
+resourceName: projects/line-msg-kiosk-board-dev/locations/asia-northeast1/triggers/8bba59b4-83c5-47ee-91b3-1a457fe89360
+serviceAccount: projects/line-msg-kiosk-board-dev/serviceAccounts/cloud-build-development@line-msg-kiosk-board-dev.iam.gserviceaccount.com
+substitutions:
+  _CONTEXT_DIR: services/dispatcher
+  _IMAGE_NAME: dispatcher
+  _REGION: asia-northeast1
+  _REPOSITORY: kiosk
+  _STATIC_TAG: dev

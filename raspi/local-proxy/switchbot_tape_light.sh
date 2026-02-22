@@ -2,17 +2,23 @@
 set -euo pipefail
 
 # ====== 設定（環境変数から読む）======
+# 本番: 未設定または https://api.switch-bot.com
+# 開発: ローカル Switchbot 互換 API（例: http://127.0.0.1:8080）
+BASE="${SWITCHBOT_API_BASE:-https://api.switch-bot.com}"
 SW_TOKEN="${SWITCHBOT_TOKEN:-}"
 SW_SECRET="${SWITCHBOT_SECRET:-}"
-BASE="https://api.switch-bot.com"
 # ===================================
 
-if [ -z "$SW_TOKEN" ] || [ -z "$SW_SECRET" ]; then
-  echo "SWITCHBOT_TOKEN and SWITCHBOT_SECRET are required" >&2
-  exit 1
+# 本番 API のときだけトークン必須
+if [[ "$BASE" == *"api.switch-bot.com"* ]]; then
+  if [ -z "$SW_TOKEN" ] || [ -z "$SW_SECRET" ]; then
+    echo "SWITCHBOT_TOKEN and SWITCHBOT_SECRET are required for production API" >&2
+    exit 1
+  fi
 fi
 
 req_headers() {
+  [[ "$BASE" != *"api.switch-bot.com"* ]] && return 0
   local t nonce data sign
   t="$(python3 - <<'PY'
 import time
@@ -26,7 +32,6 @@ PY
 )"
   data="${SW_TOKEN}${t}${nonce}"
 
-  # HMAC-SHA256 -> base64 （公式例と同じ）:contentReference[oaicite:2]{index=2}
   sign="$(python3 - <<PY
 import base64, hmac, hashlib
 token="${SW_TOKEN}"
@@ -47,29 +52,35 @@ EOF
 
 sb_get() {
   local path="$1"
-  # ヘッダは同一リクエスト内で t/nonce/sign が整合している必要があるので一回生成して使う
-  local headers
-  headers="$(req_headers)"
-  curl -sS "${BASE}${path}" \
-    -H "$(echo "$headers" | sed -n '1p')" \
-    -H "$(echo "$headers" | sed -n '2p')" \
-    -H "$(echo "$headers" | sed -n '3p')" \
-    -H "$(echo "$headers" | sed -n '4p')" \
-    -H "$(echo "$headers" | sed -n '5p')"
+  if [[ "$BASE" == *"api.switch-bot.com"* ]]; then
+    local headers
+    headers="$(req_headers)"
+    curl -sS "${BASE}${path}" \
+      -H "$(echo "$headers" | sed -n '1p')" \
+      -H "$(echo "$headers" | sed -n '2p')" \
+      -H "$(echo "$headers" | sed -n '3p')" \
+      -H "$(echo "$headers" | sed -n '4p')" \
+      -H "$(echo "$headers" | sed -n '5p')"
+  else
+    curl -sS "${BASE}${path}" -H "Content-Type: application/json"
+  fi
 }
 
 sb_post() {
   local path="$1" body="$2"
-  # ヘッダは同一リクエスト内で t/nonce/sign が整合している必要があるので一回生成して使う
-  local headers
-  headers="$(req_headers)"
-  curl -sS -X POST "${BASE}${path}" \
-    -H "$(echo "$headers" | sed -n '1p')" \
-    -H "$(echo "$headers" | sed -n '2p')" \
-    -H "$(echo "$headers" | sed -n '3p')" \
-    -H "$(echo "$headers" | sed -n '4p')" \
-    -H "$(echo "$headers" | sed -n '5p')" \
-    -d "$body"
+  if [[ "$BASE" == *"api.switch-bot.com"* ]]; then
+    local headers
+    headers="$(req_headers)"
+    curl -sS -X POST "${BASE}${path}" \
+      -H "$(echo "$headers" | sed -n '1p')" \
+      -H "$(echo "$headers" | sed -n '2p')" \
+      -H "$(echo "$headers" | sed -n '3p')" \
+      -H "$(echo "$headers" | sed -n '4p')" \
+      -H "$(echo "$headers" | sed -n '5p')" \
+      -d "$body"
+  else
+    curl -sS -X POST "${BASE}${path}" -H "Content-Type: application/json" -d "$body"
+  fi
 }
 
 list_devices() {

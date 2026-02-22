@@ -114,6 +114,36 @@ resource "google_secret_manager_secret" "app" {
   depends_on = [google_project_service.required]
 }
 
+# API Gateway が Cloud Run を呼ぶ際に使う ID に run.invoker を付与する。
+# Terraform の api_config は backend_auth_service_account をサポートしないため、
+# プロジェクトのデフォルト Compute SA に付与（API Gateway は未指定時にこれを使うことが多い）。
+resource "google_cloud_run_service_iam_member" "api_gateway_line_webhook_invoker" {
+  count = var.enable_api_gateway && var.enable_cloud_run_services && var.line_webhook_image != "" ? 1 : 0
+  project  = var.project_id
+  location = var.region
+  service  = local.line_webhook_service_name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
+}
+
+resource "google_service_account" "cloud_build" {
+  account_id   = "cloud-build-${var.environment}"
+  display_name = "Cloud Build (${var.environment})"
+  project      = var.project_id
+}
+
+resource "google_project_iam_member" "cloud_build_roles" {
+  for_each = toset([
+    "roles/cloudbuild.builds.builder",
+    "roles/artifactregistry.writer",
+    "roles/logging.logWriter",
+    "roles/storage.objectAdmin",
+  ])
+  project = var.project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.cloud_build.email}"
+}
+
 resource "google_service_account" "line_webhook" {
   account_id   = local.line_webhook_sa_id
   display_name = "line-webhook (${var.environment})"
@@ -133,10 +163,11 @@ resource "google_service_account" "kiosk_gateway" {
 }
 
 resource "google_cloud_run_v2_service" "line_webhook" {
-  count    = var.enable_cloud_run_services && var.line_webhook_image != "" ? 1 : 0
-  name     = local.line_webhook_service_name
-  location = var.region
-  project  = var.project_id
+  count               = var.enable_cloud_run_services && var.line_webhook_image != "" ? 1 : 0
+  name                = local.line_webhook_service_name
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = var.cloud_run_deletion_protection
 
   template {
     timeout         = "${var.cloud_run_timeout_seconds}s"
@@ -210,10 +241,11 @@ resource "google_cloud_run_v2_service" "line_webhook" {
 }
 
 resource "google_cloud_run_v2_service" "dispatcher" {
-  count    = var.enable_cloud_run_services && var.dispatcher_image != "" ? 1 : 0
-  name     = local.dispatcher_service_name
-  location = var.region
-  project  = var.project_id
+  count               = var.enable_cloud_run_services && var.dispatcher_image != "" ? 1 : 0
+  name                = local.dispatcher_service_name
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = var.cloud_run_deletion_protection
 
   template {
     timeout         = "${var.cloud_run_timeout_seconds}s"
@@ -262,10 +294,11 @@ resource "google_cloud_run_v2_service" "dispatcher" {
 }
 
 resource "google_cloud_run_v2_service" "kiosk_gateway" {
-  count    = var.enable_cloud_run_services && var.kiosk_gateway_image != "" ? 1 : 0
-  name     = local.kiosk_gateway_service_name
-  location = var.region
-  project  = var.project_id
+  count               = var.enable_cloud_run_services && var.kiosk_gateway_image != "" ? 1 : 0
+  name                = local.kiosk_gateway_service_name
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = var.cloud_run_deletion_protection
 
   template {
     timeout         = "${var.cloud_run_timeout_seconds}s"
@@ -320,6 +353,24 @@ resource "google_cloud_run_v2_service" "kiosk_gateway" {
     google_secret_manager_secret.app,
     google_secret_manager_secret_iam_member.kiosk_gateway_secret_accessor,
   ]
+}
+
+resource "google_cloud_run_service_iam_member" "line_webhook_invoker_all_users" {
+  count    = var.enable_cloud_run_services && var.line_webhook_image != "" && var.line_webhook_allow_unauthenticated ? 1 : 0
+  project  = var.project_id
+  location = var.region
+  service  = local.line_webhook_service_name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+resource "google_cloud_run_service_iam_member" "kiosk_gateway_invoker_all_users" {
+  count    = var.enable_cloud_run_services && var.kiosk_gateway_image != "" && var.kiosk_gateway_allow_unauthenticated ? 1 : 0
+  project  = var.project_id
+  location = var.region
+  service  = local.kiosk_gateway_service_name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }
 
 resource "google_cloud_run_service_iam_member" "dispatcher_invoker_all_users" {
@@ -407,7 +458,10 @@ resource "google_secret_manager_secret_iam_member" "kiosk_gateway_secret_accesso
 }
 
 resource "google_pubsub_subscription" "dispatcher_push" {
-  count   = local.dispatcher_push_endpoint_effective != "" ? 1 : 0
+  count = (
+    var.dispatcher_push_endpoint != "" ||
+    (var.enable_cloud_run_services && var.dispatcher_image != "")
+  ) ? 1 : 0
   name    = local.pubsub_sub_name
   topic   = google_pubsub_topic.kiosk_events.name
   project = var.project_id
@@ -435,16 +489,26 @@ resource "google_cloud_run_service_iam_member" "dispatcher_invoker_pubsub_sa" {
 }
 
 resource "google_api_gateway_api" "line_webhook" {
-  provider     = google-beta
-  count        = var.enable_api_gateway && local.line_webhook_backend_url_effective != "" ? 1 : 0
+  provider = google-beta
+  count = (
+    var.enable_api_gateway && (
+      var.line_webhook_backend_url != "" ||
+      (var.enable_cloud_run_services && var.line_webhook_image != "")
+    )
+  ) ? 1 : 0
   project      = var.project_id
   api_id       = local.api_name
   display_name = "line-webhook (${var.environment})"
 }
 
 resource "google_api_gateway_api_config" "line_webhook" {
-  provider      = google-beta
-  count         = var.enable_api_gateway && local.line_webhook_backend_url_effective != "" ? 1 : 0
+  provider = google-beta
+  count = (
+    var.enable_api_gateway && (
+      var.line_webhook_backend_url != "" ||
+      (var.enable_cloud_run_services && var.line_webhook_image != "")
+    )
+  ) ? 1 : 0
   project       = var.project_id
   api           = google_api_gateway_api.line_webhook[0].api_id
   api_config_id = local.config_name
@@ -464,8 +528,13 @@ resource "google_api_gateway_api_config" "line_webhook" {
 }
 
 resource "google_api_gateway_gateway" "line_webhook" {
-  provider     = google-beta
-  count        = var.enable_api_gateway && local.line_webhook_backend_url_effective != "" ? 1 : 0
+  provider = google-beta
+  count = (
+    var.enable_api_gateway && (
+      var.line_webhook_backend_url != "" ||
+      (var.enable_cloud_run_services && var.line_webhook_image != "")
+    )
+  ) ? 1 : 0
   project      = var.project_id
   region       = var.region
   api_config   = google_api_gateway_api_config.line_webhook[0].id
@@ -477,16 +546,20 @@ resource "google_cloudbuild_trigger" "service_images" {
   for_each = var.enable_cloud_build_triggers && var.github_owner != "" && var.github_repo_name != "" ? local.cloud_build_services : {}
 
   project     = var.project_id
-  name        = "${replace(each.key, "-", "_")}_build_${var.environment}"
+  name        = "${each.key}-build-${var.environment}"
   description = "Build ${each.key} image on push (${var.environment})"
-  filename    = "cloudbuild/build-service-image.yaml"
 
-  github {
-    owner = var.github_owner
-    name  = var.github_repo_name
-    push {
-      branch = var.github_branch_regex
-    }
+  source_to_build {
+    uri       = "https://github.com/${var.github_owner}/${var.github_repo_name}"
+    ref       = "refs/heads/${var.github_branch_name}"
+    repo_type = "GITHUB"
+  }
+
+  git_file_source {
+    path      = "cloudbuild/build-service-image.yaml"
+    uri       = "https://github.com/${var.github_owner}/${var.github_repo_name}"
+    revision  = "refs/heads/${var.github_branch_name}"
+    repo_type = "GITHUB"
   }
 
   included_files = [

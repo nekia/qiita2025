@@ -96,6 +96,49 @@ TARGET_BASE=$KIOSK_URL PORT=8080 node index.js
 ```
 - 将来 `PROXY_BEARER_TOKEN` を設定すると Authorization ヘッダを付与して中継。
 
+### development キオスク端末（ノートPC）でメッセージビューをテストする
+development 環境の LINE イベントをノートPCのブラウザで表示する手順。
+
+1. **Terraform で kiosk-gateway に未認証許可を付与（development のみ）**
+   ```sh
+   cd infra/terraform
+   terraform apply -var-file=envs/development.tfvars
+   ```
+   `kiosk_gateway_allow_unauthenticated = true` が `envs/development.tfvars` に設定されていれば、トークンなしで kiosk-gateway-dev を呼べる。
+
+2. **kiosk-gateway-dev の URL を取得**
+   ```sh
+   export PROJECT_ID=line-msg-kiosk-board-dev
+   export REGION=asia-northeast1
+   TARGET_BASE=$(gcloud run services describe kiosk-gateway-dev --region $REGION --project $PROJECT_ID --format='value(status.url)')
+   echo $TARGET_BASE
+   ```
+
+3. **local-proxy を development 向けに起動**
+   ```sh
+   cd raspi/local-proxy
+   npm install
+   TARGET_BASE=$TARGET_BASE DEVICE_ID=home-parents-dev-1 PORT=8080 node index.js
+   ```
+   - `DEVICE_ID=home-parents-dev-1` は development の `device_id`（`envs/development.tfvars` の `device_id`）に合わせる。
+   - development では未認証許可しているため `PROXY_BEARER_TOKEN` と `KIOSK_SA_KEY_PATH` は不要。
+
+4. **メッセージビューを開く**
+   - ブラウザで **`http://localhost:8080/?deviceId=home-parents-dev-1`** を開く。
+   - `deviceId` クエリで development の device を指定すると、その device の Firestore イベントが SSE で表示される。
+   - LINE で development 用ボットにメッセージを送ると、ここにイベントが流れる。
+
+5. **（任意）ソフトウェア版テープライトで未読点滅を再現**
+   - 実機と同じ `switchbot_tape_light.sh` をそのまま使う。**BASE だけ開発用に切り替える**。
+   - local-proxy が Switchbot API 互換のエンドポイント（`GET/POST /v1.1/devices`）を提供する。未読時にスクリプトが送る turnOn/turnOff をそのまま受け、画面上のテープライトに SSE で配信する。
+   ```sh
+   SWITCHBOT_API_BASE=http://127.0.0.1:8080 \
+   SWITCHBOT_TAPE_LIGHT_SCRIPT=./switchbot_tape_light.sh \
+   SWITCHBOT_TAPE_LIGHT_DEVICE_ID=soft-1 \
+   TARGET_BASE=$TARGET_BASE DEVICE_ID=home-parents-dev-1 PORT=8080 node index.js
+   ```
+   - 本番では `SWITCHBOT_API_BASE` を未設定（または `https://api.switch-bot.com`）にし、`SWITCHBOT_TOKEN` / `SWITCHBOT_SECRET` を設定する。開発では上記のとおり `SWITCHBOT_API_BASE=http://127.0.0.1:8080` のみ追加する。
+
 ### Raspberry Pi への同期手順
 ```sh
 # ローカルから同期（必要に応じてホスト/ディレクトリを上書き）

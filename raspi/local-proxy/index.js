@@ -636,6 +636,40 @@ app.get("/api/image-proxy", (req, res) => {
   upstreamReq.end();
 });
 
+// ----- テープライト用 SSE（ソフトウェア版で turnOn 時に配信） -----
+const tapeLightSseClients = new Set();
+
+app.get("/tape-light/events", (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+  tapeLightSseClients.add(res);
+  req.on("close", () => tapeLightSseClients.delete(res));
+});
+
+// ----- Switchbot API 互換（開発用。BASE をここに向けると同一スクリプトでソフトウェア版テープライト） -----
+app.get("/v1.1/devices", (_req, res) => {
+  res.status(200).json({ statusCode: 100, body: { deviceList: [] } });
+});
+
+app.post("/v1.1/devices/:deviceId/commands", (req, res) => {
+  const { deviceId } = req.params;
+  const command = req.body?.command ?? "";
+  res.status(200).json({ statusCode: 100, body: {} });
+  if (command === "turnOn") {
+    const payload = JSON.stringify({ type: "blink", count: 1, interval_ms: 400 });
+    for (const client of tapeLightSseClients) {
+      try {
+        client.write(`event: blink\ndata: ${payload}\n\n`);
+      } catch (err) {
+        tapeLightSseClients.delete(client);
+      }
+    }
+  }
+});
+
 app.use(PHOTO_BASE_PATH, express.static(PHOTO_DIR));
 
 app.use(express.static(path.join(__dirname, "..", "..", "web")));

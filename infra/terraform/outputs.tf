@@ -28,6 +28,7 @@ output "artifact_registry_repository" {
 
 output "service_accounts" {
   value = {
+    cloud_build   = google_service_account.cloud_build.email
     line_webhook  = google_service_account.line_webhook.email
     dispatcher    = google_service_account.dispatcher.email
     kiosk_gateway = google_service_account.kiosk_gateway.email
