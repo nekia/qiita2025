@@ -119,37 +119,6 @@
             cursor: not-allowed;
         }
 
-        /* development 用テープライトシミュレータ */
-        .tape-light-simulator {
-            display: none;
-            align-items: center;
-            gap: 0.4rem;
-            font-size: 1.2rem;
-            color: #888;
-        }
-        .tape-light-simulator--visible {
-            display: flex;
-        }
-        .tape-light-simulator__lamp {
-            width: 12px;
-            height: 32px;
-            background: #333;
-            border-radius: 3px;
-            border: 1px solid #555;
-            flex-shrink: 0;
-        }
-        .tape-light-simulator__lamp.blink {
-            animation: tape-light-blink 400ms ease-in-out 3;
-        }
-        @keyframes tape-light-blink {
-            0%, 100% { background: #333; box-shadow: none; }
-            50% { background: #f0c000; box-shadow: 0 0 12px #f0c000; }
-        }
-        .tape-light-simulator__lamp.blink-on {
-            background: #f0c000;
-            box-shadow: 0 0 12px #f0c000;
-        }
-
         .content {
             flex: 1 1 auto;
             display: flex;
@@ -532,10 +501,6 @@
         <!-- 上部バー -->
         <div class="top-bar">
             <div class="top-bar__left">
-                <div class="tape-light-simulator" id="tapeLightSimulator" title="development用テープライトシミュレータ（未読で点滅）">
-                    <div class="tape-light-simulator__lamp" id="tapeLightSimulatorLamp" aria-hidden="true"></div>
-                    <span class="tape-light-simulator__label">テープライト</span>
-                </div>
                 <span>👵 メッセージボード</span>
                 <span class="top-bar__badge" id="topUnreadBadge">
                     <span class="unread-icon" aria-hidden="true">🗨️</span>
@@ -630,7 +595,6 @@
             const p = new URLSearchParams(location.search);
             return p.get("deviceId") || "home-parents-1";
         })();
-        const TAPE_LIGHT_SIMULATOR_VISIBLE = /dev/.test(DEVICE_ID);
         const DEFAULT_PROXY_BASE = "http://localhost:8080";
         const PROXY_BASE =
             location.protocol === "file:" || location.origin === "null"
@@ -639,7 +603,6 @@
         const SINCE_KEY = "kiosk_since_ms";
         const NOTIFY_SOUND_COOLDOWN_MS = 2000;
         const NOTIFY_SOUND_HISTORY_CUTOFF_MS = 5 * 60 * 1000;
-        const TAPE_LIGHT_BLINK_DURATION_MS = 400 * 3;
         let audioCtx = null;
         let audioUnlocked = false;
         let audioWarned = false;
@@ -797,29 +760,6 @@
             });
         }
 
-        function triggerTapeLightSimulatorBlink(count, intervalMs) {
-            if (!TAPE_LIGHT_SIMULATOR_VISIBLE) return;
-            const lamp = document.getElementById("tapeLightSimulatorLamp");
-            if (!lamp) return;
-            const c = count > 0 ? count : 3;
-            const i = intervalMs > 0 ? intervalMs : 400;
-            lamp.classList.remove("blink");
-            void lamp.offsetWidth;
-            if (c === 3 && i === 400) {
-                lamp.classList.add("blink");
-                setTimeout(() => lamp.classList.remove("blink"), TAPE_LIGHT_BLINK_DURATION_MS);
-            } else {
-                let n = 0;
-                function tick() {
-                    lamp.classList.toggle("blink-on", n % 2 === 1);
-                    n++;
-                    if (n < c * 2) setTimeout(tick, i);
-                    else lamp.classList.remove("blink-on");
-                }
-                tick();
-            }
-        }
-
         function setupAudioUnlock() {
             const unlock = () => {
                 unlockAudioContext();
@@ -835,25 +775,6 @@
 
         setupAudioUnlock();
         updateSoundUi();
-
-        if (TAPE_LIGHT_SIMULATOR_VISIBLE) {
-            const sim = document.getElementById("tapeLightSimulator");
-            if (sim) sim.classList.add("tape-light-simulator--visible");
-            const tapeLightEventsUrl = `${PROXY_BASE.replace(/\/$/, "")}/tape-light/events`;
-            try {
-                const tapeLightEs = new EventSource(tapeLightEventsUrl);
-                tapeLightEs.addEventListener("blink", (ev) => {
-                    try {
-                        const data = ev.data ? JSON.parse(ev.data) : {};
-                        triggerTapeLightSimulatorBlink(data.count, data.interval_ms);
-                    } catch (e) {
-                        triggerTapeLightSimulatorBlink();
-                    }
-                });
-            } catch (e) {
-                console.warn("tape-light EventSource failed:", e);
-            }
-        }
 
         if (btnEnableSound) {
             btnEnableSound.addEventListener("click", () => {
@@ -1579,7 +1500,6 @@
                     const wasAdded = addMessageToHistory(data);
                     if (wasAdded && !isHistoryEvent && isNewMessage) {
                         playNotifyMelody();
-                        triggerTapeLightSimulatorBlink();
                     }
                     initialMessageCount++;
                     

@@ -8,6 +8,22 @@ const fs = require("fs/promises");
 const { JWT } = require("google-auth-library");
 const cors = require("cors");
 
+function addTimestamp(arg) {
+  if (typeof arg === "string" && arg.trimStart().startsWith("{")) {
+    try {
+      const o = JSON.parse(arg);
+      return JSON.stringify({ time: new Date().toISOString(), ...o });
+    } catch (_) {}
+  }
+  return arg;
+}
+const _log = console.log;
+const _warn = console.warn;
+const _error = console.error;
+console.log = (...args) => _log(...(args.length ? [addTimestamp(args[0]), ...args.slice(1)] : args));
+console.warn = (...args) => _warn(...(args.length ? [addTimestamp(args[0]), ...args.slice(1)] : args));
+console.error = (...args) => _error(...(args.length ? [addTimestamp(args[0]), ...args.slice(1)] : args));
+
 const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json({ type: "application/json" }));
@@ -35,9 +51,8 @@ const TAPE_LIGHT_BLINK_COUNT = Number(process.env.SWITCHBOT_TAPE_LIGHT_BLINK_COU
 const TAPE_LIGHT_BLINK_INTERVAL_MS = Number(process.env.SWITCHBOT_TAPE_LIGHT_BLINK_INTERVAL_MS || 400);
 const TAPE_LIGHT_COOLDOWN_MS = Number(process.env.SWITCHBOT_TAPE_LIGHT_COOLDOWN_MS || 3000);
 const TAPE_LIGHT_DEBUG = process.env.SWITCHBOT_TAPE_LIGHT_DEBUG === "1";
-const TAPE_LIGHT_REPEAT_UNREAD = process.env.SWITCHBOT_TAPE_LIGHT_REPEAT_UNREAD === "1";
+const TAPE_LIGHT_REPEAT_UNREAD = process.env.SWITCHBOT_TAPE_LIGHT_REPEAT_UNREAD !== "0";
 const HISTORY_UNREAD_CUTOFF_MS = Number(process.env.HISTORY_UNREAD_CUTOFF_MS || 5 * 60 * 1000);
-
 function safeUrl(base, path) {
   try {
     return new URL(path, base);
@@ -366,6 +381,7 @@ async function getIdTokenCached(keyPath, audience) {
 }
 
 app.get("/sse", async (req, res) => {
+  console.log(JSON.stringify({ severity: "INFO", message: "SSE connection received", query: req.query }));
   const targetUrl = safeUrl(TARGET_BASE, "/sse");
   if (!targetUrl) {
     console.error(JSON.stringify({ severity: "ERROR", message: "invalid TARGET_BASE", value: TARGET_BASE }));
@@ -634,40 +650,6 @@ app.get("/api/image-proxy", (req, res) => {
   });
 
   upstreamReq.end();
-});
-
-// ----- テープライト用 SSE（ソフトウェア版で turnOn 時に配信） -----
-const tapeLightSseClients = new Set();
-
-app.get("/tape-light/events", (req, res) => {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  });
-  tapeLightSseClients.add(res);
-  req.on("close", () => tapeLightSseClients.delete(res));
-});
-
-// ----- Switchbot API 互換（開発用。BASE をここに向けると同一スクリプトでソフトウェア版テープライト） -----
-app.get("/v1.1/devices", (_req, res) => {
-  res.status(200).json({ statusCode: 100, body: { deviceList: [] } });
-});
-
-app.post("/v1.1/devices/:deviceId/commands", (req, res) => {
-  const { deviceId } = req.params;
-  const command = req.body?.command ?? "";
-  res.status(200).json({ statusCode: 100, body: {} });
-  if (command === "turnOn") {
-    const payload = JSON.stringify({ type: "blink", count: 1, interval_ms: 400 });
-    for (const client of tapeLightSseClients) {
-      try {
-        client.write(`event: blink\ndata: ${payload}\n\n`);
-      } catch (err) {
-        tapeLightSseClients.delete(client);
-      }
-    }
-  }
 });
 
 app.use(PHOTO_BASE_PATH, express.static(PHOTO_DIR));

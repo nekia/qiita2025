@@ -128,16 +128,16 @@ development 環境の LINE イベントをノートPCのブラウザで表示す
    - `deviceId` クエリで development の device を指定すると、その device の Firestore イベントが SSE で表示される。
    - LINE で development 用ボットにメッセージを送ると、ここにイベントが流れる。
 
-5. **（任意）ソフトウェア版テープライトで未読点滅を再現**
-   - 実機と同じ `switchbot_tape_light.sh` をそのまま使う。**BASE だけ開発用に切り替える**。
-   - local-proxy が Switchbot API 互換のエンドポイント（`GET/POST /v1.1/devices`）を提供する。未読時にスクリプトが送る turnOn/turnOff をそのまま受け、画面上のテープライトに SSE で配信する。
+5. **（任意）開発環境で実機テープライトを未読点滅に使う**
+   - 実機のテープライトを development のノートPCから制御したい場合は、起動時にテープライトのデバイスIDと本番 API 用の認証を指定する。
    ```sh
-   SWITCHBOT_API_BASE=http://127.0.0.1:8080 \
-   SWITCHBOT_TAPE_LIGHT_SCRIPT=./switchbot_tape_light.sh \
-   SWITCHBOT_TAPE_LIGHT_DEVICE_ID=soft-1 \
+   cd raspi/local-proxy
+   SWITCHBOT_TAPE_LIGHT_DEVICE_ID=XX:XX:XX:XX:XX:XX \
+   SWITCHBOT_TOKEN=... SWITCHBOT_SECRET=... \
    TARGET_BASE=$TARGET_BASE DEVICE_ID=home-parents-dev-1 PORT=8080 node index.js
    ```
-   - 本番では `SWITCHBOT_API_BASE` を未設定（または `https://api.switch-bot.com`）にし、`SWITCHBOT_TOKEN` / `SWITCHBOT_SECRET` を設定する。開発では上記のとおり `SWITCHBOT_API_BASE=http://127.0.0.1:8080` のみ追加する。
+   - `SWITCHBOT_TAPE_LIGHT_DEVICE_ID` に Switchbot アプリなどで確認したテープライトのデバイスIDを指定する。`SWITCHBOT_API_BASE` は未設定のまま（本番 API）にし、`SWITCHBOT_TOKEN` / `SWITCHBOT_SECRET` を設定する。
+   - 未読メッセージがある間、local-proxy が `switchbot_tape_light.sh` を実行し、指定した実機が点滅する。
 
 ### Raspberry Pi への同期手順
 ```sh
