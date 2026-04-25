@@ -157,15 +157,27 @@ variable "dispatcher_allow_unauthenticated" {
 }
 
 variable "cloud_run_cpu" {
-  description = "CPU limit for Cloud Run services."
+  description = "CPU limit for Cloud Run services (line-webhook, dispatcher)."
   type        = string
-  default     = "1"
+  default     = "0.5"
 }
 
 variable "cloud_run_memory" {
-  description = "Memory limit for Cloud Run services."
+  description = "Memory limit for Cloud Run services (line-webhook, dispatcher)."
   type        = string
-  default     = "512Mi"
+  default     = "256Mi"
+}
+
+variable "kiosk_gateway_cpu" {
+  description = "CPU limit for kiosk-gateway. SSE long-polling is mostly I/O-bound, so minimal CPU suffices."
+  type        = string
+  default     = "0.08"
+}
+
+variable "kiosk_gateway_memory" {
+  description = "Memory limit for kiosk-gateway."
+  type        = string
+  default     = "256Mi"
 }
 
 variable "cloud_run_min_instances" {
@@ -184,6 +196,12 @@ variable "cloud_run_timeout_seconds" {
   description = "Request timeout in seconds for Cloud Run services."
   type        = number
   default     = 300
+}
+
+variable "kiosk_gateway_timeout_seconds" {
+  description = "Request timeout in seconds for kiosk-gateway (SSE long-lived connections). Max 3600."
+  type        = number
+  default     = 3600
 }
 
 variable "cloud_run_deletion_protection" {

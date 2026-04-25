@@ -136,6 +136,34 @@ PY
       sleep "$interval_sec"
     done
     ;;
+  flashy)
+    deviceId="${2:-}"
+    count="${3:-3}"
+    interval_ms="${4:-300}"
+    if [ -z "$deviceId" ]; then
+      echo "deviceId is required for flashy" >&2
+      exit 1
+    fi
+    if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+      echo "count must be integer" >&2
+      exit 1
+    fi
+    interval_sec="$(python3 - <<PY
+ms = int("$interval_ms")
+print(ms / 1000.0)
+PY
+)"
+    COLORS=("255:0:0" "0:255:0" "0:100:255" "255:255:0" "255:0:255" "0:255:255")
+    cmd "$deviceId" "turnOn" "default"
+    cmd "$deviceId" "setBrightness" "100"
+    for ((i = 0; i < count; i += 1)); do
+      for color in "${COLORS[@]}"; do
+        cmd "$deviceId" "setColor" "$color"
+        sleep "$interval_sec"
+      done
+    done
+    cmd "$deviceId" "turnOff" "default"
+    ;;
   *) echo "Usage:
   $0 devices
   $0 on|off|toggle <deviceId>
@@ -143,5 +171,6 @@ PY
   $0 rgb <deviceId> <R:G:B>
   $0 cct <deviceId> <2700-6500>   # 対応モデルのみ
   $0 blink <deviceId> [count] [interval_ms]
+  $0 flashy <deviceId> [count] [interval_ms]  # 最大輝度でカラフルフラッシュ
 " >&2; exit 1 ;;
 esac

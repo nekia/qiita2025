@@ -170,8 +170,9 @@ resource "google_cloud_run_v2_service" "line_webhook" {
   deletion_protection = var.cloud_run_deletion_protection
 
   template {
-    timeout         = "${var.cloud_run_timeout_seconds}s"
-    service_account = google_service_account.line_webhook.email
+    timeout                          = "${var.cloud_run_timeout_seconds}s"
+    max_instance_request_concurrency = 1
+    service_account                  = google_service_account.line_webhook.email
 
     scaling {
       min_instance_count = var.cloud_run_min_instances
@@ -182,6 +183,7 @@ resource "google_cloud_run_v2_service" "line_webhook" {
       image = var.line_webhook_image
 
       resources {
+        cpu_idle = true
         limits = {
           cpu    = var.cloud_run_cpu
           memory = var.cloud_run_memory
@@ -248,8 +250,9 @@ resource "google_cloud_run_v2_service" "dispatcher" {
   deletion_protection = var.cloud_run_deletion_protection
 
   template {
-    timeout         = "${var.cloud_run_timeout_seconds}s"
-    service_account = google_service_account.dispatcher.email
+    timeout                          = "${var.cloud_run_timeout_seconds}s"
+    max_instance_request_concurrency = 1
+    service_account                  = google_service_account.dispatcher.email
 
     scaling {
       min_instance_count = var.cloud_run_min_instances
@@ -260,6 +263,7 @@ resource "google_cloud_run_v2_service" "dispatcher" {
       image = var.dispatcher_image
 
       resources {
+        cpu_idle = true
         limits = {
           cpu    = var.cloud_run_cpu
           memory = var.cloud_run_memory
@@ -301,8 +305,9 @@ resource "google_cloud_run_v2_service" "kiosk_gateway" {
   deletion_protection = var.cloud_run_deletion_protection
 
   template {
-    timeout         = "${var.cloud_run_timeout_seconds}s"
-    service_account = google_service_account.kiosk_gateway.email
+    timeout                          = "${var.kiosk_gateway_timeout_seconds}s"
+    max_instance_request_concurrency = 1
+    service_account                  = google_service_account.kiosk_gateway.email
 
     scaling {
       min_instance_count = var.cloud_run_min_instances
@@ -313,9 +318,10 @@ resource "google_cloud_run_v2_service" "kiosk_gateway" {
       image = var.kiosk_gateway_image
 
       resources {
+        cpu_idle = true
         limits = {
-          cpu    = var.cloud_run_cpu
-          memory = var.cloud_run_memory
+          cpu    = var.kiosk_gateway_cpu
+          memory = var.kiosk_gateway_memory
         }
       }
 
