@@ -591,7 +591,10 @@
     </div>
 
     <script>
-        const DEVICE_ID = "home-parents-1";
+        const DEVICE_ID = (() => {
+            const p = new URLSearchParams(location.search);
+            return p.get("deviceId") || "home-parents-1";
+        })();
         const DEFAULT_PROXY_BASE = "http://localhost:8080";
         const PROXY_BASE =
             location.protocol === "file:" || location.origin === "null"

@@ -1,0 +1,28 @@
+swagger: "2.0"
+info:
+  title: line-webhook-gateway
+  description: LINE webhook ingress to Cloud Run
+  version: 1.0.0
+schemes:
+  - https
+produces:
+  - application/json
+consumes:
+  - application/json
+paths:
+  /callback:
+    post:
+      summary: LINE webhook callback endpoint
+      operationId: callback
+      parameters:
+        - name: X-Line-Signature
+          in: header
+          required: false
+          type: string
+      x-google-backend:
+        address: ${backend_url}
+        protocol: h2
+        path_translation: APPEND_PATH_TO_ADDRESS
+      responses:
+        "200":
+          description: OK

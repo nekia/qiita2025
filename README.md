@@ -5,6 +5,7 @@
 - `services/kiosk-gateway/` Firestoreポーリング → SSE
 - `raspi/local-proxy/` localhostでSSE中継（将来Bearer追加可）
 - `web/` 最小UI（EventSourceで表示）
+- `infra/terraform/` GCPインフラを環境別（production/development）に管理するIaC
 
 ### 事前設定
 ```sh
@@ -13,6 +14,19 @@ REGION=asia-northeast1
 TOPIC=kiosk-events
 SUB=kiosk-dispatcher-sub
 PUBSUB_SA=pubsub-push@$PROJECT_ID.iam.gserviceaccount.com
+```
+
+### productionとdevelopmentを同居させる時の注意
+- `deploy-*.sh` は `SERVICE_NAME` を指定しないと既存の production サービス名を使います。
+- development を同一プロジェクトに作る場合は、必ず `*-dev` の名前を指定してください。
+
+```sh
+# 例: line-webhook を dev 名でデプロイ
+SERVICE_NAME=line-webhook-dev \
+FIRESTORE_DATABASE_ID=line-msg-store-dev \
+PUBSUB_TOPIC=kiosk-events-dev \
+LINE_IMAGE_BUCKET=kiosk-line-image-dev \
+./deploy-line-webhook.sh
 ```
 
 ### GCPリソース
@@ -82,6 +96,49 @@ TARGET_BASE=$KIOSK_URL PORT=8080 node index.js
 # ブラウザ: http://localhost:8080/ で EventSource が proxy 経由で接続
 ```
 - 将来 `PROXY_BEARER_TOKEN` を設定すると Authorization ヘッダを付与して中継。
+
+### development キオスク端末（ノートPC）でメッセージビューをテストする
+development 環境の LINE イベントをノートPCのブラウザで表示する手順。
+
+1. **Terraform で kiosk-gateway に未認証許可を付与（development のみ）**
+   ```sh
+   cd infra/terraform
+   terraform apply -var-file=envs/development.tfvars
+   ```
+   `kiosk_gateway_allow_unauthenticated = true` が `envs/development.tfvars` に設定されていれば、トークンなしで kiosk-gateway-dev を呼べる。
+
+2. **kiosk-gateway-dev の URL を取得**
+   ```sh
+   export PROJECT_ID=line-msg-kiosk-board-dev
+   export REGION=asia-northeast1
+   TARGET_BASE=$(gcloud run services describe kiosk-gateway-dev --region $REGION --project $PROJECT_ID --format='value(status.url)')
+   echo $TARGET_BASE
+   ```
+
+3. **local-proxy を development 向けに起動**
+   ```sh
+   cd raspi/local-proxy
+   npm install
+   TARGET_BASE=$TARGET_BASE DEVICE_ID=home-parents-dev-1 PORT=8080 node index.js
+   ```
+   - `DEVICE_ID=home-parents-dev-1` は development の `device_id`（`envs/development.tfvars` の `device_id`）に合わせる。
+   - development では未認証許可しているため `PROXY_BEARER_TOKEN` と `KIOSK_SA_KEY_PATH` は不要。
+
+4. **メッセージビューを開く**
+   - ブラウザで **`http://localhost:8080/?deviceId=home-parents-dev-1`** を開く。
+   - `deviceId` クエリで development の device を指定すると、その device の Firestore イベントが SSE で表示される。
+   - LINE で development 用ボットにメッセージを送ると、ここにイベントが流れる。
+
+5. **（任意）開発環境で実機テープライトを未読点滅に使う**
+   - 実機のテープライトを development のノートPCから制御したい場合は、起動時にテープライトのデバイスIDと本番 API 用の認証を指定する。
+   ```sh
+   cd raspi/local-proxy
+   SWITCHBOT_TAPE_LIGHT_DEVICE_ID=XX:XX:XX:XX:XX:XX \
+   SWITCHBOT_TOKEN=... SWITCHBOT_SECRET=... \
+   TARGET_BASE=$TARGET_BASE DEVICE_ID=home-parents-dev-1 PORT=8080 node index.js
+   ```
+   - `SWITCHBOT_TAPE_LIGHT_DEVICE_ID` に Switchbot アプリなどで確認したテープライトのデバイスIDを指定する。`SWITCHBOT_API_BASE` は未設定のまま（本番 API）にし、`SWITCHBOT_TOKEN` / `SWITCHBOT_SECRET` を設定する。
+   - 未読メッセージがある間、local-proxy が `switchbot_tape_light.sh` を実行し、指定した実機が点滅する。
 
 ### Raspberry Pi への同期手順
 ```sh

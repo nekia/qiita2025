@@ -1,0 +1,10 @@
+# GitGuardian secrets detection configuration
+# https://docs.gitguardian.com/ggshield-docs/configuration
+
+secret:
+  # Terraform variables that only define Secret Manager secret *names* (identifiers),
+  # not actual secret values. Real API keys/tokens live in GCP Secret Manager.
+  # Generic Terraform Variable Secret detector may otherwise flag variable names
+  # such as secret_name_line_channel_access_token and their default identifier strings.
+  ignored_paths:
+    - "infra/terraform/variables.tf"

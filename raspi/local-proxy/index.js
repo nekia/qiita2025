@@ -8,6 +8,22 @@ const fs = require("fs/promises");
 const { JWT } = require("google-auth-library");
 const cors = require("cors");
 
+function addTimestamp(arg) {
+  if (typeof arg === "string" && arg.trimStart().startsWith("{")) {
+    try {
+      const o = JSON.parse(arg);
+      return JSON.stringify({ time: new Date().toISOString(), ...o });
+    } catch (_) {}
+  }
+  return arg;
+}
+const _log = console.log;
+const _warn = console.warn;
+const _error = console.error;
+console.log = (...args) => _log(...(args.length ? [addTimestamp(args[0]), ...args.slice(1)] : args));
+console.warn = (...args) => _warn(...(args.length ? [addTimestamp(args[0]), ...args.slice(1)] : args));
+console.error = (...args) => _error(...(args.length ? [addTimestamp(args[0]), ...args.slice(1)] : args));
+
 const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json({ type: "application/json" }));
@@ -34,8 +50,9 @@ const TAPE_LIGHT_SHELL = process.env.SWITCHBOT_TAPE_LIGHT_SHELL || "bash";
 const TAPE_LIGHT_BLINK_COUNT = Number(process.env.SWITCHBOT_TAPE_LIGHT_BLINK_COUNT || 3);
 const TAPE_LIGHT_BLINK_INTERVAL_MS = Number(process.env.SWITCHBOT_TAPE_LIGHT_BLINK_INTERVAL_MS || 400);
 const TAPE_LIGHT_COOLDOWN_MS = Number(process.env.SWITCHBOT_TAPE_LIGHT_COOLDOWN_MS || 3000);
+const TAPE_LIGHT_DEBUG = process.env.SWITCHBOT_TAPE_LIGHT_DEBUG === "1";
+const TAPE_LIGHT_REPEAT_UNREAD = process.env.SWITCHBOT_TAPE_LIGHT_REPEAT_UNREAD !== "0";
 const HISTORY_UNREAD_CUTOFF_MS = Number(process.env.HISTORY_UNREAD_CUTOFF_MS || 5 * 60 * 1000);
-
 function safeUrl(base, path) {
   try {
     return new URL(path, base);
@@ -52,11 +69,23 @@ function isAllowedImageProxyHost(hostname) {
 const tokenCache = new Map(); // key: `${keyPath}::${audience}` => { token, exp }
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif"]);
 const unreadEventIds = new Set();
+const blinkedEventIds = new Set();
 let blinkLoopRunning = false;
 let tapeLightWarned = false;
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function logTapeLightDebug(payload) {
+  if (!TAPE_LIGHT_DEBUG) return;
+  console.log(
+    JSON.stringify({
+      severity: "DEBUG",
+      component: "tape-light",
+      ...payload,
+    })
+  );
 }
 
 function parseSinceToMs(value) {
@@ -93,6 +122,12 @@ function ensureTapeLightConfigured() {
 
 async function runTapeLightBlink(reason, eventId) {
   if (!ensureTapeLightConfigured()) return;
+  logTapeLightDebug({
+    action: "blink_start",
+    reason,
+    eventId,
+    unreadCount: unreadEventIds.size,
+  });
   const args = [
     TAPE_LIGHT_SCRIPT,
     "blink",
@@ -140,6 +175,13 @@ async function runTapeLightBlink(reason, eventId) {
           })
         );
       }
+      logTapeLightDebug({
+        action: "blink_end",
+        reason,
+        eventId,
+        exitCode: code,
+        unreadCount: unreadEventIds.size,
+      });
       resolve();
     });
   });
@@ -147,12 +189,47 @@ async function runTapeLightBlink(reason, eventId) {
 
 function enqueueTapeLightBlink(reason) {
   if (!ensureTapeLightConfigured()) return;
-  if (blinkLoopRunning) return;
+  if (blinkLoopRunning) {
+    logTapeLightDebug({
+      action: "blink_enqueue_skipped",
+      reason,
+      unreadCount: unreadEventIds.size,
+    });
+    return;
+  }
   blinkLoopRunning = true;
   (async () => {
     try {
       while (unreadEventIds.size > 0) {
-        await runTapeLightBlink(reason);
+        let eventId;
+        if (TAPE_LIGHT_REPEAT_UNREAD) {
+          [eventId] = unreadEventIds;
+        } else {
+          eventId = Array.from(unreadEventIds).find((id) => !blinkedEventIds.has(id));
+          if (!eventId) {
+            logTapeLightDebug({
+              action: "blink_loop_no_new_unread",
+              reason,
+              unreadCount: unreadEventIds.size,
+            });
+            break;
+          }
+        }
+        logTapeLightDebug({
+          action: "blink_loop_tick",
+          reason,
+          eventId,
+          unreadCount: unreadEventIds.size,
+        });
+        await runTapeLightBlink(reason, eventId);
+        if (!TAPE_LIGHT_REPEAT_UNREAD && eventId) {
+          blinkedEventIds.add(eventId);
+          logTapeLightDebug({
+            action: "blink_marked",
+            eventId,
+            unreadCount: unreadEventIds.size,
+          });
+        }
         if (unreadEventIds.size === 0) break;
         await delay(TAPE_LIGHT_COOLDOWN_MS);
       }
@@ -167,22 +244,40 @@ function enqueueTapeLightBlink(reason) {
       );
     } finally {
       blinkLoopRunning = false;
+      logTapeLightDebug({
+        action: "blink_loop_end",
+        reason,
+        unreadCount: unreadEventIds.size,
+      });
     }
   })();
 }
 
 function addUnreadEvent(eventId) {
-  if (eventId) {
-    unreadEventIds.add(eventId);
-  } else {
-    unreadEventIds.add(`unknown-${Date.now()}`);
-  }
+  const normalizedId = eventId || `unknown-${Date.now()}`;
+  const existed = unreadEventIds.has(normalizedId);
+  unreadEventIds.add(normalizedId);
+  logTapeLightDebug({
+    action: "unread_added",
+    eventId: normalizedId,
+    existed,
+    unreadCount: unreadEventIds.size,
+  });
   enqueueTapeLightBlink("unread_message");
 }
 
 function resolveUnreadEvent(eventId) {
   if (!eventId) return;
-  unreadEventIds.delete(eventId);
+  const existed = unreadEventIds.delete(eventId);
+  if (existed) {
+    blinkedEventIds.delete(eventId);
+  }
+  logTapeLightDebug({
+    action: "unread_resolved",
+    eventId,
+    existed,
+    unreadCount: unreadEventIds.size,
+  });
 }
 
 function createSseTapper(onEvent) {
@@ -286,6 +381,7 @@ async function getIdTokenCached(keyPath, audience) {
 }
 
 app.get("/sse", async (req, res) => {
+  console.log(JSON.stringify({ severity: "INFO", message: "SSE connection received", query: req.query }));
   const targetUrl = safeUrl(TARGET_BASE, "/sse");
   if (!targetUrl) {
     console.error(JSON.stringify({ severity: "ERROR", message: "invalid TARGET_BASE", value: TARGET_BASE }));
@@ -314,7 +410,22 @@ app.get("/sse", async (req, res) => {
     },
     (upstreamRes) => {
       const tapSse = createSseTapper((event) => {
-        if (!isUnreadEvent(event)) return;
+        const unread = isUnreadEvent(event);
+        logTapeLightDebug({
+          action: "sse_event",
+          eventId: event?.id,
+          type: event?.type,
+          status: event?.status,
+          reply: event?.reply,
+          createdAt: event?.createdAt,
+          unread,
+        });
+        if (!unread) {
+          if (event?.id) {
+            resolveUnreadEvent(event.id);
+          }
+          return;
+        }
         const createdAtMs = parseSinceToMs(event.createdAt);
         const isHistoryEvent =
           isHistoryLoad &&
@@ -323,12 +434,22 @@ app.get("/sse", async (req, res) => {
 
         if (isHistoryEvent && historyUnreadNotified) {
           // history unread already noticed; still track for continuous blinking
+          logTapeLightDebug({
+            action: "history_unread_repeat",
+            eventId: event?.id,
+            createdAt: event?.createdAt,
+          });
           addUnreadEvent(event.id);
           return;
         }
 
         if (isHistoryEvent && !historyUnreadNotified) {
           historyUnreadNotified = true;
+          logTapeLightDebug({
+            action: "history_unread_first",
+            eventId: event?.id,
+            createdAt: event?.createdAt,
+          });
         }
 
         addUnreadEvent(event.id);

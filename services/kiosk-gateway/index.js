@@ -155,6 +155,9 @@ app.get("/sse", async (req, res) => {
 });
 
 app.post("/line/reply", async (req, res) => {
+  let replyText = null;
+  let replyChoices = null;
+  let replySelectedIndex = null;
   try {
     // リクエストボディ全体をログに出力（デバッグ用）
     console.log(JSON.stringify({
@@ -186,6 +189,48 @@ app.post("/line/reply", async (req, res) => {
     }
 
     const { routeId, quoteToken, messageId, sourceType } = line;
+
+    // 元イベントから選択肢を取得して、送信文面に反映する
+    if (deviceId && messageId) {
+      try {
+        const eventRef = firestore.doc(`devices/${deviceId}/events/${messageId}`);
+        const eventSnap = await eventRef.get();
+        if (eventSnap.exists) {
+          const eventData = eventSnap.data() || {};
+          if (Array.isArray(eventData?.payload?.choices) && eventData.payload.choices.length > 0) {
+            replyChoices = eventData.payload.choices.filter((choice) => typeof choice === "string" && choice.trim().length > 0);
+          } else if (eventData?.gemini?.choice1 || eventData?.gemini?.choice2) {
+            replyChoices = [eventData.gemini.choice1, eventData.gemini.choice2].filter(
+              (choice) => typeof choice === "string" && choice.trim().length > 0
+            );
+          }
+        }
+      } catch (err) {
+        console.warn(JSON.stringify({
+          severity: "WARN",
+          message: "failed to fetch event choices",
+          deviceId,
+          messageId,
+          error: err.message,
+        }));
+      }
+    }
+
+    replyText = text;
+    if (Array.isArray(replyChoices) && replyChoices.length > 0) {
+      const lines = ["選択肢:"];
+      replyChoices.forEach((choice, index) => {
+        const isSelected = choice === text;
+        if (isSelected) {
+          replySelectedIndex = index + 1;
+        }
+        lines.push(`${index + 1}. ${choice}${isSelected ? " (選択)" : ""}`);
+      });
+      if (!replySelectedIndex) {
+        lines.push("", `選択: ${text}`);
+      }
+      replyText = lines.join("\n");
+    }
     
     console.log(JSON.stringify({
       severity: "INFO",
@@ -205,8 +250,8 @@ app.post("/line/reply", async (req, res) => {
     // quoteToken は replyToken ではない（引用表示用）。送信するメッセージに付与する。
     const to = routeId; // routeIdはgroupId, roomId, userIdのいずれか
     const message = quoteToken
-      ? { type: "text", text, quoteToken }
-      : { type: "text", text };
+      ? { type: "text", text: replyText, quoteToken }
+      : { type: "text", text: replyText };
 
     await client.pushMessage(to, message);
     console.log(JSON.stringify({
@@ -221,6 +266,8 @@ app.post("/line/reply", async (req, res) => {
       const replyRef = firestore.doc(`devices/${deviceId}/events/${messageId}`);
       const replyPayload = {
         choiceText: text,
+        choices: replyChoices || null,
+        selectedIndex: replySelectedIndex,
         repliedAt: FieldValue.serverTimestamp(),
         source: "kiosk",
       };
@@ -355,8 +402,8 @@ app.post("/line/reply", async (req, res) => {
 
         const fallbackText =
           sourceLines.length > 0
-            ? `${text}\n\n---\n（引用に失敗したため、元メッセージ情報を付与）\n${sourceLines.join("\n")}`
-            : text;
+            ? `${replyText || text}\n\n---\n（引用に失敗したため、元メッセージ情報を付与）\n${sourceLines.join("\n")}`
+            : replyText || text;
 
         await client.pushMessage(fallbackRouteId, { type: "text", text: fallbackText });
         console.log(JSON.stringify({
