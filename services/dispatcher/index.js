@@ -237,6 +237,50 @@ app.post("/pubsub/push", async (req, res) => {
   const { eventId, deviceId, type, payload, occurredAt, line } = parsed;
   const docRef = firestore.doc(`devices/${deviceId}/events/${eventId}`);
 
+  try {
+    const alreadyProcessed = await firestore.runTransaction(async (t) => {
+      const docSnap = await t.get(docRef);
+      if (docSnap.exists) {
+        return true;
+      }
+      t.set(docRef, {
+        eventId,
+        deviceId,
+        type,
+        status: "processing",
+        payload,
+        source: "line",
+        line,
+        occurredAt: toTimestamp(occurredAt),
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      return false;
+    });
+
+    if (alreadyProcessed) {
+      console.log(
+        JSON.stringify({
+          severity: "INFO",
+          message: "event already processing or processed, skipping",
+          eventId,
+          deviceId,
+        })
+      );
+      return res.status(204).send();
+    }
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        severity: "ERROR",
+        message: "firestore transaction failed",
+        error: err.message,
+        eventId,
+        deviceId,
+      })
+    );
+    return res.status(500).json({ error: "failed to check idempotency" });
+  }
+
   const isImageMessage =
     payload.messageType === "image" || payload.imageUrl || payload?.image?.url;
 
@@ -251,19 +295,11 @@ app.post("/pubsub/push", async (req, res) => {
     binaryChoice = await generateBinaryChoice(payload.text);
   }
 
-  const doc = {
-    eventId,
-    deviceId,
-    type,
+  const updateDoc = {
     status: "new",
-    payload,
-    source: "line",
-    line,
-    occurredAt: toTimestamp(occurredAt),
-    createdAt: FieldValue.serverTimestamp(),
   };
   if (binaryChoice) {
-    doc.gemini = {
+    updateDoc.gemini = {
       choice1: binaryChoice.choice1,
       choice2: binaryChoice.choice2,
       reasoning: binaryChoice.reasoning,
@@ -272,7 +308,7 @@ app.post("/pubsub/push", async (req, res) => {
   }
 
   try {
-    await docRef.set(doc, { merge: true });
+    await docRef.update(updateDoc);
     console.log(
       JSON.stringify({
         severity: "INFO",
@@ -288,7 +324,7 @@ app.post("/pubsub/push", async (req, res) => {
     console.error(
       JSON.stringify({
         severity: "ERROR",
-        message: "firestore write failed",
+        message: "firestore update failed",
         error: err.message,
         eventId,
         deviceId,

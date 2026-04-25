@@ -22,9 +22,11 @@ if ! gcloud pubsub subscriptions describe $PUBSUB_SUBSCRIPTION --project $PROJEC
     gcloud pubsub subscriptions create $PUBSUB_SUBSCRIPTION \
         --topic $PUBSUB_TOPIC \
         --push-endpoint "${DISPATCHER_URL}/pubsub/push" \
+        --ack-deadline 60 \
         --project $PROJECT_ID
 else
     gcloud pubsub subscriptions update $PUBSUB_SUBSCRIPTION \
         --push-endpoint "${DISPATCHER_URL}/pubsub/push" \
+        --ack-deadline 60 \
         --project $PROJECT_ID
 fi

@@ -43,6 +43,7 @@ DISPATCHER_URL=$(gcloud run services describe dispatcher --region $REGION --form
 gcloud pubsub subscriptions create $SUB \
   --topic $TOPIC \
   --push-endpoint="$DISPATCHER_URL/pubsub/push" \
+  --ack-deadline=60 \
   --push-auth-service-account=$PUBSUB_SA \
   --push-auth-token-audience="$DISPATCHER_URL/pubsub/push"
 ```
