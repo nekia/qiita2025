@@ -64,6 +64,16 @@ gcloud pubsub subscriptions create $SUB \
 - Cloud Run Invoker に `serviceAccount:$PUBSUB_SA` を付与  
   `gcloud run services add-iam-policy-binding dispatcher --region $REGION --member=serviceAccount:$PUBSUB_SA --role=roles/run.invoker`
 
+dispatcher の Gemini モデル指定:
+- `services/dispatcher` は環境変数 `GEMINI_MODEL` を参照します。
+- 未指定時のデフォルトは `gemini-2.5-pro` です。
+- 例: `gemini-2.5-flash` に切り替える場合
+  ```sh
+  gcloud run services update dispatcher \
+    --region $REGION \
+    --update-env-vars GEMINI_MODEL=gemini-2.5-flash
+  ```
+
 テスト publish（Pub/Subがbase64化しpush）
 ```sh
 gcloud pubsub topics publish $TOPIC --message='{"eventId":"e1","deviceId":"home-parents-1","type":"line_message","occurredAt":"2025-12-13T00:00:00Z","payload":{"text":"hello from test","senderName":"tester"}}'

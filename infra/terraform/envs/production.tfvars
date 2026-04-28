@@ -18,6 +18,7 @@ create_secrets = false
 enable_cloud_run_services            = true
 line_webhook_image                   = "asia-northeast1-docker.pkg.dev/line-msg-kiosk-board/kiosk/line-webhook:prod"
 dispatcher_image                     = "asia-northeast1-docker.pkg.dev/line-msg-kiosk-board/kiosk/dispatcher:prod"
+dispatcher_gemini_model              = "gemini-2.5-flash-lite"
 kiosk_gateway_image                  = "asia-northeast1-docker.pkg.dev/line-msg-kiosk-board/kiosk/kiosk-gateway:prod"
 cloud_run_deletion_protection        = false
 cloud_run_cpu                        = "0.5"

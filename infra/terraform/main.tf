@@ -279,6 +279,10 @@ resource "google_cloud_run_v2_service" "dispatcher" {
         value = local.firestore_database_id
       }
       env {
+        name  = "GEMINI_MODEL"
+        value = var.dispatcher_gemini_model
+      }
+      env {
         name = "GEMINI_API_KEY"
         value_source {
           secret_key_ref {

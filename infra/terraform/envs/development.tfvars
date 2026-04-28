@@ -17,6 +17,7 @@ create_secrets = false
 enable_cloud_run_services     = true
 line_webhook_image            = "asia-northeast1-docker.pkg.dev/line-msg-kiosk-board-dev/kiosk/line-webhook:dev"
 dispatcher_image              = "asia-northeast1-docker.pkg.dev/line-msg-kiosk-board-dev/kiosk/dispatcher:dev"
+dispatcher_gemini_model       = "gemini-2.5-flash-lite"
 kiosk_gateway_image           = "asia-northeast1-docker.pkg.dev/line-msg-kiosk-board-dev/kiosk/kiosk-gateway:dev"
 line_webhook_service_name     = "line-webhook-dev"
 dispatcher_service_name       = "dispatcher-dev"

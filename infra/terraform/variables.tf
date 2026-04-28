@@ -102,6 +102,12 @@ variable "dispatcher_image" {
   default     = ""
 }
 
+variable "dispatcher_gemini_model" {
+  description = "Gemini model name used by dispatcher."
+  type        = string
+  default     = "gemini-2.5-pro"
+}
+
 variable "kiosk_gateway_image" {
   description = "Container image URI for kiosk-gateway."
   type        = string
