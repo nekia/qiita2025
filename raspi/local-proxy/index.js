@@ -54,6 +54,9 @@ const TAPE_LIGHT_COOLDOWN_MS = Number(process.env.SWITCHBOT_TAPE_LIGHT_COOLDOWN_
 const TAPE_LIGHT_DEBUG = process.env.SWITCHBOT_TAPE_LIGHT_DEBUG === "1";
 const TAPE_LIGHT_REPEAT_UNREAD = process.env.SWITCHBOT_TAPE_LIGHT_REPEAT_UNREAD !== "0";
 const HISTORY_UNREAD_CUTOFF_MS = Number(process.env.HISTORY_UNREAD_CUTOFF_MS || 5 * 60 * 1000);
+const REPLY_PROXY_MAX_ATTEMPTS = Number(process.env.REPLY_PROXY_MAX_ATTEMPTS || 3);
+const REPLY_PROXY_RETRY_DELAYS_MS = [300, 1000];
+const REPLY_PROXY_REQUEST_TIMEOUT_MS = Number(process.env.REPLY_PROXY_REQUEST_TIMEOUT_MS || 0);
 function safeUrl(base, path) {
   try {
     return new URL(path, base);
@@ -95,6 +98,68 @@ function parseSinceToMs(value) {
   if (!Number.isNaN(num)) return num;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.getTime();
+}
+
+function isRetryableReplyProxyError(err) {
+  const code = err?.code || "";
+  return [
+    "EAI_AGAIN",
+    "ENOTFOUND",
+    "ECONNRESET",
+    "EHOSTUNREACH",
+    "ECONNREFUSED",
+  ].includes(code);
+}
+
+async function proxyLineReplyWithRetry({ client, targetUrl, headers, bodyStr }) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= REPLY_PROXY_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const upstreamRes = await new Promise((resolve, reject) => {
+        const upstreamReq = client.request(
+          targetUrl,
+          {
+            method: "POST",
+            headers,
+          },
+          (response) => resolve(response)
+        );
+
+        if (REPLY_PROXY_REQUEST_TIMEOUT_MS > 0) {
+          upstreamReq.setTimeout(REPLY_PROXY_REQUEST_TIMEOUT_MS, () => {
+            const timeoutErr = new Error(`upstream request timeout (${REPLY_PROXY_REQUEST_TIMEOUT_MS}ms)`);
+            timeoutErr.code = "ETIMEDOUT";
+            upstreamReq.destroy(timeoutErr);
+          });
+        }
+        upstreamReq.on("error", reject);
+        upstreamReq.write(bodyStr);
+        upstreamReq.end();
+      });
+
+      return { upstreamRes, attempt };
+    } catch (err) {
+      lastError = err;
+      const retryable = isRetryableReplyProxyError(err);
+      if (!retryable || attempt >= REPLY_PROXY_MAX_ATTEMPTS) {
+        throw err;
+      }
+      const delayMs = REPLY_PROXY_RETRY_DELAYS_MS[Math.min(attempt - 1, REPLY_PROXY_RETRY_DELAYS_MS.length - 1)];
+      console.warn(
+        JSON.stringify({
+          severity: "WARN",
+          message: "reply proxy transient error, retrying",
+          attempt,
+          maxAttempts: REPLY_PROXY_MAX_ATTEMPTS,
+          delayMs,
+          code: err.code,
+          error: err.message,
+        })
+      );
+      await delay(delayMs);
+    }
+  }
+  throw lastError || new Error("reply proxy failed");
 }
 
 function isUnreadEvent(event) {
@@ -502,34 +567,31 @@ app.post("/api/line/reply", async (req, res) => {
   };
   if (kioskBearer) headers.Authorization = `Bearer ${kioskBearer}`;
 
-  const upstreamReq = client.request(
-    targetUrl,
-    {
-      method: "POST",
+  try {
+    const { upstreamRes, attempt } = await proxyLineReplyWithRetry({
+      client,
+      targetUrl,
       headers,
-    },
-    (upstreamRes) => {
-      console.log(JSON.stringify({ 
-        severity: "INFO", 
-        message: "Upstream response", 
+      bodyStr,
+    });
+    console.log(
+      JSON.stringify({
+        severity: "INFO",
+        message: "Upstream response",
         statusCode: upstreamRes.statusCode,
-        headers: upstreamRes.headers 
-      }));
-      res.writeHead(upstreamRes.statusCode || 500, upstreamRes.headers);
-      upstreamRes.pipe(res);
-    }
-  );
-
-  upstreamReq.on("error", (err) => {
-    console.error(JSON.stringify({ severity: "ERROR", message: "reply proxy error", error: err.message, stack: err.stack }));
+        headers: upstreamRes.headers,
+        attempt,
+      })
+    );
+    res.writeHead(upstreamRes.statusCode || 500, upstreamRes.headers);
+    upstreamRes.pipe(res);
+  } catch (err) {
+    console.error(JSON.stringify({ severity: "ERROR", message: "reply proxy error", error: err.message, code: err.code, stack: err.stack }));
     if (!res.headersSent) {
       res.writeHead(502, { "Content-Type": "application/json" });
     }
     res.end(JSON.stringify({ error: "reply proxy failed", details: err.message }));
-  });
-
-  upstreamReq.write(bodyStr);
-  upstreamReq.end();
+  }
 });
 
 app.get("/api/photos", async (req, res) => {
