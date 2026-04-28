@@ -54,6 +54,27 @@ function getCursorMillisFromData(data) {
   return toMillis(data?.updatedAt) || toMillis(data?.createdAt) || null;
 }
 
+function mergeAndSortDocs(primaryDocs, secondaryDocs) {
+  const merged = new Map();
+  secondaryDocs.forEach((doc) => merged.set(doc.id, doc));
+  primaryDocs.forEach((doc) => merged.set(doc.id, doc));
+  return Array.from(merged.values()).sort((a, b) => {
+    const aCursor = getCursorMillisFromData(a.data()) || 0;
+    const bCursor = getCursorMillisFromData(b.data()) || 0;
+    if (aCursor !== bCursor) return aCursor - bCursor;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+async function queryDeltaDocs(eventsRef, sinceTs) {
+  if (!sinceTs) return [];
+  const [updatedSnapshot, createdSnapshot] = await Promise.all([
+    eventsRef.where("updatedAt", ">", sinceTs).orderBy("updatedAt", "asc").get(),
+    eventsRef.where("createdAt", ">", sinceTs).orderBy("createdAt", "asc").get(),
+  ]);
+  return mergeAndSortDocs(updatedSnapshot.docs, createdSnapshot.docs);
+}
+
 function writeEvent(res, doc) {
   const data = doc.data();
   const rawReply = data.reply || data.replyState || null;
@@ -88,11 +109,8 @@ async function initialSend(res, deviceId, sinceTs) {
   let latestTs = sinceTs;
 
   if (sinceTs) {
-    const snapshot = await eventsRef
-      .where("updatedAt", ">", sinceTs)
-      .orderBy("updatedAt", "asc")
-      .get();
-    snapshot.forEach((doc) => {
+    const docs = await queryDeltaDocs(eventsRef, sinceTs);
+    docs.forEach((doc) => {
       const data = doc.data();
       writeEvent(res, doc);
       const cursorMs = getCursorMillisFromData(data);
@@ -137,14 +155,14 @@ app.get("/sse", async (req, res) => {
   const eventsRef = firestore.collection(`devices/${deviceId}/events`);
   const poller = setInterval(async () => {
     try {
-      let query;
+      let docs = [];
       if (latestTs) {
-        query = eventsRef.where("updatedAt", ">", latestTs).orderBy("updatedAt", "asc");
+        docs = await queryDeltaDocs(eventsRef, latestTs);
       } else {
-        query = eventsRef.orderBy("updatedAt", "asc").limit(RECENT_LIMIT);
+        const snapshot = await eventsRef.orderBy("createdAt", "asc").limit(RECENT_LIMIT).get();
+        docs = snapshot.docs;
       }
-      const snapshot = await query.get();
-      snapshot.forEach((doc) => {
+      docs.forEach((doc) => {
         const data = doc.data();
         writeEvent(res, doc);
         const cursorMs = getCursorMillisFromData(data);

@@ -421,7 +421,7 @@
             padding: 0.8rem 1.2rem;
             border-radius: 16px;
             font-size: 4.5rem; /* 文字サイズを2倍 */
-            display: flex;
+            display: none; /* 未回答があるときだけ表示 */
             align-items: center;
             gap: 0.5rem;
             color: #fff;
@@ -504,7 +504,7 @@
                 <span>👵 メッセージボード</span>
                 <span class="top-bar__badge" id="topUnreadBadge">
                     <span class="unread-icon" aria-hidden="true">🗨️</span>
-                    <span id="topUnreadBadgeText">新着メッセージ 1件</span>
+                    <span id="topUnreadBadgeText"></span>
                 </span>
             </div>
             <div class="top-bar__right">
@@ -521,17 +521,13 @@
                 <div class="panel">
                     <div class="message-header">
                         <div class="message-header__left">
-                            <div class="avatar">息</div>
-                            <div class="sender-name">息子より</div>
+                            <div class="avatar"></div>
+                            <div class="sender-name"></div>
                         </div>
-                        <div class="message-time">本日 11:25</div>
+                        <div class="message-time"></div>
                     </div>
                     <div class="message-body-wrapper">
-                        <div class="message-body" id="messageBody">
-                            こんにちは。<br />
-                            今日の体調はいかがですか？<br /><br />
-                            後ほど電話してもよろしいですか？
-                        </div>
+                        <div class="message-body" id="messageBody"></div>
                         <div class="nav-buttons nav-buttons--overlay">
                             <button class="btn btn-secondary btn-disabled" id="btnPrevMsg" disabled>
                                 ⬅️ 前のメッセージ
@@ -547,14 +543,11 @@
 
                     <div class="message-footer">
                         <div class="response-buttons">
-                            <button class="btn btn-large btn-success" id="btnOk">
-                                問題ありません
+                            <button class="btn btn-large btn-success btn-disabled" id="btnOk" style="display: none;" disabled>
                             </button>
-                            <button class="btn btn-large btn-primary" id="btnCallLater">
-                                後ほど話します
+                            <button class="btn btn-large btn-primary btn-disabled" id="btnCallLater" style="display: none;" disabled>
                             </button>
-                            <button class="btn btn-large btn-secondary" id="btnAck">
-                                📖 読みました
+                            <button class="btn btn-large btn-secondary btn-disabled" id="btnAck" style="display: none;" disabled>
                             </button>
                         </div>
                         <div class="status-text" id="responseStatus">
@@ -570,7 +563,7 @@
                     <img id="photoImage" class="photo-image" src="" alt="スライドショー画像" />
                     <div class="message-indicator" id="photoMessageIndicator">
                         <span class="unread-icon" aria-hidden="true">🗨️</span>
-                        <span id="photoUnreadBadgeText">新着メッセージ 1件</span>
+                        <span id="photoUnreadBadgeText"></span>
                     </div>
                 </div>
             </div>
@@ -899,10 +892,11 @@
             secondary: document.getElementById("btnCallLater"),
             tertiary: document.getElementById("btnAck"),
         };
+        const ACK_CHOICE_TEXT = "読みました";
         let currentChoices = {
             choice1: "",
             choice2: "",
-            choice3: "",
+            choice3: ACK_CHOICE_TEXT,
             reasoning: "",
         };
 
@@ -914,7 +908,7 @@
         function applyChoiceButtons(choices) {
             const c1 = normalizeChoiceText(choices.choice1);
             const c2 = normalizeChoiceText(choices.choice2);
-            const c3 = normalizeChoiceText(choices.choice3);
+            const c3 = ACK_CHOICE_TEXT;
             currentChoices = {
                 choice1: c1,
                 choice2: c2,
@@ -1378,6 +1372,16 @@
             }
         }
 
+        function showLatestUnreadMessage() {
+            for (let i = messageHistory.length - 1; i >= 0; i -= 1) {
+                if (isUnreadMessage(messageHistory[i])) {
+                    renderMessageByIndex(i);
+                    return true;
+                }
+            }
+            return false;
+        }
+
         function isUnreadMessage(evt) {
             if (!evt) return false;
             const messageId = getMessageId(evt);
@@ -1531,8 +1535,10 @@
                             clearTimeout(initialMessageTimeout);
                         }
                         initialMessageTimeout = setTimeout(() => {
-                            // 最新のメッセージを表示
-                            showLatestMessage();
+                            // 起動直後は「最新の未読」を優先して表示
+                            if (!showLatestUnreadMessage()) {
+                                showLatestMessage();
+                            }
                             console.log(`Loaded ${initialMessageCount} messages from history`);
                         }, 1000);
                     } else {
