@@ -118,7 +118,7 @@ resource "google_secret_manager_secret" "app" {
 # Terraform の api_config は backend_auth_service_account をサポートしないため、
 # プロジェクトのデフォルト Compute SA に付与（API Gateway は未指定時にこれを使うことが多い）。
 resource "google_cloud_run_service_iam_member" "api_gateway_line_webhook_invoker" {
-  count = var.enable_api_gateway && var.enable_cloud_run_services && var.line_webhook_image != "" ? 1 : 0
+  count    = var.enable_api_gateway && var.enable_cloud_run_services && var.line_webhook_image != "" ? 1 : 0
   project  = var.project_id
   location = var.region
   service  = local.line_webhook_service_name
@@ -306,12 +306,12 @@ resource "google_cloud_run_v2_service" "kiosk_gateway" {
 
   template {
     timeout                          = "${var.kiosk_gateway_timeout_seconds}s"
-    max_instance_request_concurrency = 1
+    max_instance_request_concurrency = var.kiosk_gateway_max_instance_request_concurrency
     service_account                  = google_service_account.kiosk_gateway.email
 
     scaling {
-      min_instance_count = var.cloud_run_min_instances
-      max_instance_count = var.cloud_run_max_instances
+      min_instance_count = var.kiosk_gateway_min_instances
+      max_instance_count = var.kiosk_gateway_max_instances
     }
 
     containers {
@@ -332,6 +332,10 @@ resource "google_cloud_run_v2_service" "kiosk_gateway" {
       env {
         name  = "FIRESTORE_DATABASE_ID"
         value = local.firestore_database_id
+      }
+      env {
+        name  = "POLL_INTERVAL_MS"
+        value = tostring(var.kiosk_gateway_poll_interval_ms)
       }
       env {
         name = "LINE_CHANNEL_ACCESS_TOKEN"

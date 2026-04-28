@@ -23,6 +23,10 @@ dispatcher_service_name       = "dispatcher-dev"
 kiosk_gateway_service_name    = "kiosk-gateway-dev"
 cloud_run_deletion_protection        = false
 kiosk_gateway_allow_unauthenticated  = true   # dev キオスク／ノートPC からトークンなしでテスト可能にする
+kiosk_gateway_min_instances          = 1
+kiosk_gateway_max_instances          = 10
+kiosk_gateway_max_instance_request_concurrency = 40
+kiosk_gateway_poll_interval_ms       = 10000
 
 # Build pipeline:
 # Triggers are created via gcloud (see infra/terraform/README.md).

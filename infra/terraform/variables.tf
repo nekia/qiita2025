@@ -204,6 +204,30 @@ variable "kiosk_gateway_timeout_seconds" {
   default     = 3600
 }
 
+variable "kiosk_gateway_min_instances" {
+  description = "Minimum instance count for kiosk-gateway."
+  type        = number
+  default     = 0
+}
+
+variable "kiosk_gateway_max_instances" {
+  description = "Maximum instance count for kiosk-gateway."
+  type        = number
+  default     = 10
+}
+
+variable "kiosk_gateway_max_instance_request_concurrency" {
+  description = "Maximum concurrent requests per kiosk-gateway instance (SSE connections)."
+  type        = number
+  default     = 40
+}
+
+variable "kiosk_gateway_poll_interval_ms" {
+  description = "Firestore polling interval in milliseconds for kiosk-gateway SSE."
+  type        = number
+  default     = 2000
+}
+
 variable "cloud_run_deletion_protection" {
   description = "Deletion protection flag for Cloud Run services."
   type        = bool
