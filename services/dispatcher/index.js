@@ -16,6 +16,7 @@ const ai = new GoogleGenAI({
 app.use(express.json({ type: "application/json" }));
 
 const PORT = process.env.PORT || 8080;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash-lite";
 
 /**
  * Decode and validate Pub/Sub push message.
@@ -97,7 +98,7 @@ async function generateBinaryChoice(message) {
 回答者は80代のアナログ世代に女性であり、投稿者の母親もしくは祖母です。`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: GEMINI_MODEL,
       contents: prompt,
     });
 
@@ -184,7 +185,7 @@ async function generateBinaryChoiceFromImage(imageUrl, message) {
     const imagePart = await fetchImageInlineData(imageUrl);
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: GEMINI_MODEL,
       contents: [
         {
           role: "user",

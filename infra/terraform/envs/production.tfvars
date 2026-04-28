@@ -28,7 +28,7 @@ kiosk_gateway_timeout_seconds        = 3600
 kiosk_gateway_allow_unauthenticated  = false
 kiosk_gateway_min_instances          = 1
 kiosk_gateway_max_instances          = 20
-kiosk_gateway_max_instance_request_concurrency = 80
+kiosk_gateway_max_instance_request_concurrency = 1
 
 # Cloud Build triggers は 1st-gen GitHub App 経由で gcloud スクリプトで管理
 # （Terraform の source_to_build は 2nd-gen 接続が必要なため使わない）
