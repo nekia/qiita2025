@@ -139,6 +139,14 @@ development 環境の LINE イベントをノートPCのブラウザで表示す
    - `deviceId` クエリで development の device を指定すると、その device の Firestore イベントが SSE で表示される。
    - LINE で development 用ボットにメッセージを送ると、ここにイベントが流れる。
 
+### 本番でメッセージビューを開く URL と設定場所
+
+- 本番のメッセージビュー URL は **`http://localhost:8080/?deviceId=home-parents-1`**。
+- `deviceId=home-parents-1` は production の `envs/production.tfvars` の `device_id` に対応。
+- ラズパイ側の設定ファイルは **`/home/atsushi/kiosk/raspi/local-proxy/.env`**。
+- この `.env` の **`TARGET_BASE`** に、本番 `kiosk-gateway` の URL（`https://...run.app`）を設定する。
+- 起動時に `raspi/local-proxy/start-proxy.sh` が `.env` を読み込み、`TARGET_BASE` を `local-proxy` に渡す。
+
 5. **（任意）開発環境で実機テープライトを未読点滅に使う**
    - 実機のテープライトを development のノートPCから制御したい場合は、起動時にテープライトのデバイスIDと本番 API 用の認証を指定する。
    ```sh
@@ -295,6 +303,65 @@ sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority \
 - `pm2 restart` 実行時に環境変数を変更した場合は `--update-env` が必要。
 - 画像取得が `403 AccessDenied` の場合、使用しているサービスアカウントに
   `storage.objects.get` が付与されているか確認する。
+
+### 本番適用時の注意（ラズパイ運用）
+
+- Terraform apply だけではラズパイ側は更新されない（Cloud Run と local-proxy は別管理）。
+- `start-proxy.sh` の `TARGET_BASE` は固定既定値を持つため、本番 `kiosk-gateway` URL かを必ず確認する。
+- `deploy-to-pi.sh` は `.env` を同期しない（`--exclude=".env"`）。ラズパイ上の `raspi/local-proxy/.env` は手動更新が必要。
+- 本番で `kiosk_gateway_allow_unauthenticated = false` の場合、`KIOSK_SA_KEY_PATH` の鍵配置と権限を確認する。
+- 環境変数を変えた後の PM2 再起動は `--update-env` を付ける。
+
+#### 本番適用順（推奨）
+
+1. `infra/terraform` で production apply を実行する。
+2. `kiosk-gateway` の最新 URL を取得する。
+3. ラズパイの `raspi/local-proxy/.env` の `TARGET_BASE` を上記 URL に更新する。
+4. `./raspi/deploy-to-pi.sh --code-only` でコード同期する。
+5. ラズパイで `pm2 restart kiosk-local-proxy --update-env` を実行する。
+6. `pm2 logs kiosk-local-proxy --lines 100` で `target` と `Upstream response statusCode:200` を確認する。
+
+#### 本番反映コマンド例（コピペ用）
+
+```sh
+# 1) Terraform apply（production）
+cd infra/terraform
+terraform apply -var-file=envs/production.tfvars
+```
+
+```sh
+# 2) kiosk-gateway の本番 URL を取得
+export PROJECT_ID=line-msg-kiosk-board
+export REGION=asia-northeast1
+KIOSK_URL=$(gcloud run services describe kiosk-gateway --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')
+echo "$KIOSK_URL"
+```
+
+```sh
+# 3) ラズパイに入り、local-proxy の .env を更新
+ssh atsushi@192.168.3.22
+cd /home/atsushi/kiosk/raspi/local-proxy
+vi .env
+# TARGET_BASE=<上で取得した KIOSK_URL> に変更
+```
+
+```sh
+# 4) ローカルPC側でコード同期（.env は同期されない）
+cd /path/to/qiita2025
+./raspi/deploy-to-pi.sh --code-only
+```
+
+```sh
+# 5) ラズパイで環境変数を反映して再起動
+ssh atsushi@192.168.3.22
+pm2 restart kiosk-local-proxy --update-env
+pm2 logs kiosk-local-proxy --lines 100
+```
+
+```sh
+# 6) 簡易ヘルスチェック（ラズパイ）
+curl -sS http://localhost:8080/healthz
+```
 
 #### 音出力に関するポイント
 - 音が出ない場合はまず出力先を HDMI に切り替える（`sudo raspi-config nonint do_audio 2`）。
