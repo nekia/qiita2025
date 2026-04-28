@@ -50,6 +50,10 @@ function toMillis(ts) {
   return null;
 }
 
+function getCursorMillisFromData(data) {
+  return toMillis(data?.updatedAt) || toMillis(data?.createdAt) || null;
+}
+
 function writeEvent(res, doc) {
   const data = doc.data();
   const rawReply = data.reply || data.replyState || null;
@@ -67,6 +71,7 @@ function writeEvent(res, doc) {
     payload: data.payload,
     status: data.status,
     createdAt: toMillis(data.createdAt),
+    updatedAt: toMillis(data.updatedAt),
     occurredAt: toMillis(data.occurredAt),
     source: data.source,
     line: data.line,
@@ -84,12 +89,14 @@ async function initialSend(res, deviceId, sinceTs) {
 
   if (sinceTs) {
     const snapshot = await eventsRef
-      .where("createdAt", ">", sinceTs)
-      .orderBy("createdAt", "asc")
+      .where("updatedAt", ">", sinceTs)
+      .orderBy("updatedAt", "asc")
       .get();
     snapshot.forEach((doc) => {
+      const data = doc.data();
       writeEvent(res, doc);
-      latestTs = doc.get("createdAt") || latestTs;
+      const cursorMs = getCursorMillisFromData(data);
+      if (cursorMs) latestTs = Timestamp.fromMillis(cursorMs);
     });
     return latestTs;
   }
@@ -97,8 +104,10 @@ async function initialSend(res, deviceId, sinceTs) {
   const snapshot = await eventsRef.orderBy("createdAt", "desc").limit(RECENT_LIMIT).get();
   const docs = snapshot.docs.reverse(); // oldest first
   docs.forEach((doc) => {
+    const data = doc.data();
     writeEvent(res, doc);
-    latestTs = doc.get("createdAt") || latestTs;
+    const cursorMs = getCursorMillisFromData(data);
+    if (cursorMs) latestTs = Timestamp.fromMillis(cursorMs);
   });
   return latestTs;
 }
@@ -130,14 +139,16 @@ app.get("/sse", async (req, res) => {
     try {
       let query;
       if (latestTs) {
-        query = eventsRef.where("createdAt", ">", latestTs).orderBy("createdAt", "asc");
+        query = eventsRef.where("updatedAt", ">", latestTs).orderBy("updatedAt", "asc");
       } else {
-        query = eventsRef.orderBy("createdAt", "asc").limit(RECENT_LIMIT);
+        query = eventsRef.orderBy("updatedAt", "asc").limit(RECENT_LIMIT);
       }
       const snapshot = await query.get();
       snapshot.forEach((doc) => {
+        const data = doc.data();
         writeEvent(res, doc);
-        latestTs = doc.get("createdAt") || latestTs;
+        const cursorMs = getCursorMillisFromData(data);
+        if (cursorMs) latestTs = Timestamp.fromMillis(cursorMs);
       });
     } catch (err) {
       console.error(JSON.stringify({ severity: "ERROR", message: "poll failed", error: err.message, deviceId }));
@@ -276,6 +287,7 @@ app.post("/line/reply", async (req, res) => {
           status: "replied",
           reply: replyPayload,
           repliedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
         },
         { merge: true }
       );

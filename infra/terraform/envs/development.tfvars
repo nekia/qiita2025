@@ -10,6 +10,9 @@ pubsub_subscription_name = "kiosk-events-dispatcher-dev"
 line_image_bucket_name   = "kiosk-line-image-dev"
 device_id                = "home-parents-dev-1"
 
+# Secrets are already created in the project; manage IAM bindings only.
+create_secrets = false
+
 # Enable this after image tags exist in Artifact Registry:
 enable_cloud_run_services     = true
 line_webhook_image            = "asia-northeast1-docker.pkg.dev/line-msg-kiosk-board-dev/kiosk/line-webhook:dev"

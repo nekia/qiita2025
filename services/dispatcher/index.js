@@ -253,6 +253,7 @@ app.post("/pubsub/push", async (req, res) => {
         line,
         occurredAt: toTimestamp(occurredAt),
         createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
       return false;
     });
@@ -297,6 +298,7 @@ app.post("/pubsub/push", async (req, res) => {
 
   const updateDoc = {
     status: "new",
+    updatedAt: FieldValue.serverTimestamp(),
   };
   if (binaryChoice) {
     updateDoc.gemini = {

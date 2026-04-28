@@ -900,25 +900,33 @@
             tertiary: document.getElementById("btnAck"),
         };
         let currentChoices = {
-            choice1: "問題ありません",
-            choice2: "後ほど話します",
-            choice3: "読みました",
+            choice1: "",
+            choice2: "",
+            choice3: "",
             reasoning: "",
         };
 
+        function normalizeChoiceText(value) {
+            if (typeof value !== "string") return "";
+            return value.trim();
+        }
+
         function applyChoiceButtons(choices) {
-            const c1 = choices.choice1 || "問題ありません";
-            const c2 = choices.choice2 || "後ほど話します";
-            const c3 = choices.choice3 || "読みました";
+            const c1 = normalizeChoiceText(choices.choice1);
+            const c2 = normalizeChoiceText(choices.choice2);
+            const c3 = normalizeChoiceText(choices.choice3);
             currentChoices = {
                 choice1: c1,
                 choice2: c2,
                 choice3: c3,
                 reasoning: choices.reasoning || "",
             };
-            choiceButtons.primary.textContent = `${c1}`;
-            choiceButtons.secondary.textContent = `${c2}`;
-            choiceButtons.tertiary.textContent = `📖 ${c3}`;
+            choiceButtons.primary.textContent = c1 || "";
+            choiceButtons.secondary.textContent = c2 || "";
+            choiceButtons.tertiary.textContent = c3 ? `📖 ${c3}` : "";
+            choiceButtons.primary.style.display = c1 ? "" : "none";
+            choiceButtons.secondary.style.display = c2 ? "" : "none";
+            choiceButtons.tertiary.style.display = c3 ? "" : "none";
         }
 
         function setActiveScreen(name) {
@@ -956,14 +964,17 @@
         startMessageIdleTimer();
 
         choiceButtons.primary.addEventListener("click", () => {
+            if (!currentChoices.choice1) return;
             sendLineReply(currentChoices.choice1);
         });
 
         choiceButtons.secondary.addEventListener("click", () => {
+            if (!currentChoices.choice2) return;
             sendLineReply(currentChoices.choice2);
         });
 
         choiceButtons.tertiary.addEventListener("click", () => {
+            if (!currentChoices.choice3) return;
             sendLineReply(currentChoices.choice3);
         });
 
@@ -1093,13 +1104,14 @@
         }
 
         function addMessageToHistory(evt) {
-            // 重複チェック（同じeventIdやmessageIdの場合は追加しない）
+            // 重複チェック（同じeventIdやmessageIdの場合は更新扱い）
             const eventId = evt.eventId || evt.id;
             const messageId = evt.line?.messageId;
-            const exists = messageHistory.some(msg => 
-                (eventId && msg.eventId === eventId) || 
+            const existingIndex = messageHistory.findIndex((msg) =>
+                (eventId && (msg.eventId === eventId || msg.id === eventId)) ||
                 (messageId && msg.line?.messageId === messageId)
             );
+            const exists = existingIndex >= 0;
             
             if (!exists) {
                 messageHistory.push(evt);
@@ -1111,6 +1123,15 @@
                 });
                 // 最新のメッセージ（最後の要素）にインデックスを設定
                 currentMessageIndex = messageHistory.length - 1;
+            } else {
+                const previous = messageHistory[existingIndex];
+                messageHistory[existingIndex] = {
+                    ...previous,
+                    ...evt,
+                    payload: { ...(previous.payload || {}), ...(evt.payload || {}) },
+                    line: { ...(previous.line || {}), ...(evt.line || {}) },
+                    gemini: { ...(previous.gemini || {}), ...(evt.gemini || {}) },
+                };
             }
             applyReplyStateFromEvent(evt);
             updateUnansweredIndicators();
@@ -1192,10 +1213,6 @@
                 messageBody.appendChild(textEl);
             }
 
-            if (!hasImage && !hasText) {
-                messageBody.textContent = "（メッセージ本文なし）";
-            }
-
             if (hasImage && !hasText) {
                 messageBody.classList.add("message-body--image-only");
             } else if (hasImage && hasText) {
@@ -1246,6 +1263,7 @@
             applyChoiceButtons(gemini);
 
             const allButtons = [choiceButtons.primary, choiceButtons.secondary, choiceButtons.tertiary];
+            const availableChoices = [currentChoices.choice1, currentChoices.choice2, currentChoices.choice3];
             const resetButtonStyles = () => {
                 allButtons.forEach((btn) => {
                     btn.style.opacity = "1";
@@ -1298,9 +1316,10 @@
                 responseStatusIndicator.innerHTML = '<span class="unanswered-badge">未回答</span><span>回答をお待ちしています</span>';
                 
                 // ボタンを有効化
-                allButtons.forEach((btn) => {
-                    btn.disabled = false;
-                    btn.classList.remove("btn-disabled");
+                allButtons.forEach((btn, index) => {
+                    const hasChoice = Boolean(availableChoices[index]);
+                    btn.disabled = !hasChoice;
+                    btn.classList.toggle("btn-disabled", !hasChoice);
                 });
                 
                 // ボタンのスタイルをリセット
@@ -1521,7 +1540,7 @@
                         showLatestMessage();
                     }
                     
-                    const latest = data.createdAt || Date.now();
+                    const latest = data.updatedAt || data.createdAt || Date.now();
                     localStorage.setItem(SINCE_KEY, latest);
                 } catch (err) {
                     console.error("failed to handle event", err);
