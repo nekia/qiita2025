@@ -62,6 +62,26 @@ function detectImageExtension(contentType) {
   return ".jpg";
 }
 
+function getTextWithoutMentions(text, mentionees) {
+  if (typeof text !== "string" || text.length === 0) return "";
+  const ranges = (mentionees || [])
+    .filter(
+      (m) =>
+        Number.isInteger(m?.index) &&
+        Number.isInteger(m?.length) &&
+        m.length > 0
+    )
+    .sort((a, b) => b.index - a.index);
+
+  let stripped = text;
+  for (const range of ranges) {
+    stripped =
+      stripped.slice(0, range.index) +
+      stripped.slice(range.index + range.length);
+  }
+  return stripped.trim();
+}
+
 async function uploadLineImage(messageId) {
   if (!LINE_IMAGE_BUCKET) {
     throw new Error("LINE_IMAGE_BUCKET is not set");
@@ -217,6 +237,25 @@ app.post("/callback", signatureMiddleware, async (req, res) => {
         : isGroupOrRoom
           ? selfMentioned
           : source.type === "user";
+      const hasTextBody =
+        isTextMessage &&
+        getTextWithoutMentions(event.message?.text || "", mentionees).length > 0;
+      const isMentionOnlyInGroup = isGroupOrRoom && selfMentioned && !hasTextBody;
+
+      // メンションのみの誤送信は処理対象外にし、本文/画像の送信を促す
+      if (isMentionOnlyInGroup) {
+        if (event.replyToken) {
+          try {
+            await lineClient.replyMessage(event.replyToken, {
+              type: "text",
+              text: "本文もしくは画像を添付して送信してください。",
+            });
+          } catch (err) {
+            console.warn("failed to reply mention-only guidance", err.message);
+          }
+        }
+        return;
+      }
 
       const displayName = await getDisplayName();
 
