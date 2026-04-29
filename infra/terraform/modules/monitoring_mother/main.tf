@@ -1,0 +1,204 @@
+locals {
+  env_suffix            = var.environment == "production" ? "" : "-${var.environment}"
+  monitoring_service    = var.service_name != "" ? var.service_name : "monitoring-mother${local.env_suffix}"
+  runtime_sa_account_id = "monitoring-mother${local.env_suffix}"
+  scheduler_sa_id       = "monitoring-mother-sch${local.env_suffix}"
+}
+
+resource "google_service_account" "runtime" {
+  project      = var.project_id
+  account_id   = local.runtime_sa_account_id
+  display_name = "monitoring-mother runtime (${var.environment})"
+}
+
+resource "google_service_account" "scheduler_invoker" {
+  project      = var.project_id
+  account_id   = local.scheduler_sa_id
+  display_name = "monitoring-mother scheduler invoker (${var.environment})"
+}
+
+resource "google_cloud_run_v2_service" "monitoring_mother" {
+  project             = var.project_id
+  location            = var.region
+  name                = local.monitoring_service
+  deletion_protection = false
+
+  template {
+    timeout                          = "${var.cloud_run_timeout_seconds}s"
+    max_instance_request_concurrency = 1
+    service_account                  = google_service_account.runtime.email
+
+    scaling {
+      min_instance_count = var.cloud_run_min_instances
+      max_instance_count = var.cloud_run_max_instances
+    }
+
+    containers {
+      image = var.container_image
+
+      resources {
+        cpu_idle = true
+        limits = {
+          cpu    = var.cloud_run_cpu
+          memory = var.cloud_run_memory
+        }
+      }
+
+      env {
+        name  = "FIRESTORE_PROJECT_ID"
+        value = var.project_id
+      }
+      env {
+        name  = "FIRESTORE_DATABASE_ID"
+        value = var.firestore_database_id
+      }
+      env {
+        name  = "TIMEZONE"
+        value = var.timezone
+      }
+      env {
+        name  = "LINE_GROUP_ID"
+        value = var.line_group_id
+      }
+      env {
+        name  = "LEARNING_LOOKBACK_DAYS"
+        value = tostring(var.learning_lookback_days)
+      }
+      env {
+        name  = "ANOMALY_EXPECTED_THRESHOLD"
+        value = tostring(var.anomaly_expected_threshold)
+      }
+      env {
+        name  = "ANOMALY_INACTIVE_HOURS"
+        value = tostring(var.anomaly_inactive_hours)
+      }
+      env {
+        name = "SWITCHBOT_WEBHOOK_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = var.switchbot_secret_name
+            version = "latest"
+          }
+        }
+      }
+      env {
+        name = "LINE_CHANNEL_ACCESS_TOKEN"
+        value_source {
+          secret_key_ref {
+            secret  = var.line_channel_access_token_secret_name
+            version = "latest"
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "google_cloud_run_service_iam_member" "allow_public" {
+  count    = var.allow_unauthenticated ? 1 : 0
+  project  = var.project_id
+  location = var.region
+  service  = google_cloud_run_v2_service.monitoring_mother.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+resource "google_cloud_run_service_iam_member" "allow_scheduler_invocation" {
+  project  = var.project_id
+  location = var.region
+  service  = google_cloud_run_v2_service.monitoring_mother.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.scheduler_invoker.email}"
+}
+
+resource "google_project_iam_member" "runtime_firestore_user" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.runtime.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "runtime_secret_accessor" {
+  for_each  = toset([var.switchbot_secret_name, var.line_channel_access_token_secret_name])
+  project   = var.project_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runtime.email}"
+  secret_id = each.value
+}
+
+resource "google_cloud_scheduler_job" "learning" {
+  project     = var.project_id
+  region      = var.region
+  name        = "${local.monitoring_service}-learn"
+  schedule    = var.learning_schedule
+  time_zone   = var.timezone
+  description = "Daily learning for monitoring-mother"
+
+  http_target {
+    uri         = "${google_cloud_run_v2_service.monitoring_mother.uri}/jobs/learn"
+    http_method = "POST"
+    oidc_token {
+      service_account_email = google_service_account.scheduler_invoker.email
+      audience              = google_cloud_run_v2_service.monitoring_mother.uri
+    }
+  }
+}
+
+resource "google_cloud_scheduler_job" "detection" {
+  project     = var.project_id
+  region      = var.region
+  name        = "${local.monitoring_service}-detect"
+  schedule    = var.detection_schedule
+  time_zone   = var.timezone
+  description = "Anomaly detection every 30 minutes"
+
+  http_target {
+    uri         = "${google_cloud_run_v2_service.monitoring_mother.uri}/jobs/detect"
+    http_method = "POST"
+    oidc_token {
+      service_account_email = google_service_account.scheduler_invoker.email
+      audience              = google_cloud_run_v2_service.monitoring_mother.uri
+    }
+  }
+}
+
+resource "google_firestore_index" "events_by_device_timestamp" {
+  project    = var.project_id
+  database   = var.firestore_database_id
+  collection = "sb_events"
+
+  fields {
+    field_path = "device_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "timestamp"
+    order      = "DESCENDING"
+  }
+
+  fields {
+    field_path = "__name__"
+    order      = "DESCENDING"
+  }
+}
+
+resource "google_firestore_index" "events_by_type_timestamp" {
+  project    = var.project_id
+  database   = var.firestore_database_id
+  collection = "sb_events"
+
+  fields {
+    field_path = "event_type"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "timestamp"
+    order      = "DESCENDING"
+  }
+
+  fields {
+    field_path = "__name__"
+    order      = "DESCENDING"
+  }
+}

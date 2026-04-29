@@ -16,6 +16,7 @@ Using separate projects is strongly recommended to reduce risk of accidental pro
 - Secret Manager secret containers
 - Service accounts + IAM roles
 - Optional Cloud Run services (`line-webhook`, `dispatcher`, `kiosk-gateway`)
+- Optional Cloud Run service (`monitoring-mother`) for SwitchBot anomaly detection
 - Optional Artifact Registry + Cloud Build triggers
 - Optional API Gateway resources
 
@@ -44,6 +45,7 @@ If you want Cloud Run also managed by Terraform:
   - `line_webhook_image`
   - `dispatcher_image`
   - `kiosk_gateway_image`
+  - `monitoring_mother_image` (when `enable_monitoring_mother = true`)
 
 Then run apply again. Pub/Sub push endpoint and API Gateway backend URL are auto-derived
 from Terraform-managed Cloud Run URLs.
@@ -67,6 +69,9 @@ docker push asia-northeast1-docker.pkg.dev/line-msg-kiosk-board-dev/kiosk/dispat
 
 docker build -t asia-northeast1-docker.pkg.dev/line-msg-kiosk-board-dev/kiosk/kiosk-gateway:dev ./services/kiosk-gateway
 docker push asia-northeast1-docker.pkg.dev/line-msg-kiosk-board-dev/kiosk/kiosk-gateway:dev
+
+docker build -t asia-northeast1-docker.pkg.dev/line-msg-kiosk-board-dev/kiosk/monitoring-mother:dev ./services/monitoring-mother
+docker push asia-northeast1-docker.pkg.dev/line-msg-kiosk-board-dev/kiosk/monitoring-mother:dev
 ```
 
 ## Build pipeline with Terraform (optional)
@@ -92,6 +97,59 @@ Created triggers use `cloudbuild/build-service-image.yaml` and automatically bui
 - `line-webhook`
 - `dispatcher`
 - `kiosk-gateway`
+- `monitoring-mother`
+
+## monitoring-mother: required settings
+
+`monitoring-mother` is a Phase 2 service for statistical anomaly detection from
+SwitchBot motion events.
+
+Set these variables in `envs/*.tfvars`:
+
+- `enable_monitoring_mother = true`
+- `monitoring_mother_image`
+- `monitoring_mother_line_group_id` (LINE group/room/user ID for alerts)
+- `monitoring_mother_learning_schedule` (default daily)
+- `monitoring_mother_detection_schedule` (default every 30 minutes)
+- `monitoring_mother_expected_threshold` (default `0.7`)
+- `monitoring_mother_inactive_hours` (default `2`)
+
+Secrets (Secret Manager) used by this service:
+
+- `switchbot_webhook_secret` (`secret_name_switchbot_webhook_secret`)
+- `line_channel_access_token` (`secret_name_line_channel_access_token`)
+
+After apply, webhook URL is available from output:
+
+```bash
+terraform output monitoring_mother
+```
+
+Use `switchbot_webhook_endpoint` from that output as SwitchBot webhook destination.
+
+## SwitchBot Webhook setup notes
+
+1. Set webhook URL to:  
+   `https://<monitoring-mother-run-url>/webhook/switchbot`
+2. Set `switchbot_webhook_secret` in Secret Manager to the same secret used in SwitchBot console.
+3. Verify Cloud Run receives header `X-Sign` and request body as JSON.
+4. Service validates signature and stores events idempotently in Firestore `sb_events`.
+5. `sb_state/global.last_detected_at` is updated on accepted motion webhook.
+
+Quick sanity check:
+
+```bash
+gcloud run services describe monitoring-mother-dev \
+  --region asia-northeast1 \
+  --project line-msg-kiosk-board-dev \
+  --format='value(status.url)'
+```
+
+Then confirm:
+
+- Scheduler jobs exist (`*-learn`, `*-detect`)
+- Firestore has collections: `sb_events`, `sb_stats`, `sb_state`
+- LINE alert is sent only once while `current_mode = ALERT`
 
 ## Apply Terraform with Cloud Run
 

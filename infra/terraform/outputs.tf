@@ -69,3 +69,14 @@ output "cloud_build_triggers" {
     }
   }
 }
+
+output "monitoring_mother" {
+  value = var.enable_monitoring_mother && var.monitoring_mother_image != "" ? {
+    service_name                  = module.monitoring_mother[0].service_name
+    service_url                   = module.monitoring_mother[0].service_url
+    switchbot_webhook_endpoint    = module.monitoring_mother[0].webhook_url
+    learning_scheduler_job_name   = module.monitoring_mother[0].learning_job_name
+    detection_scheduler_job_name  = module.monitoring_mother[0].detection_job_name
+    runtime_service_account_email = module.monitoring_mother[0].runtime_service_account_email
+  } : null
+}

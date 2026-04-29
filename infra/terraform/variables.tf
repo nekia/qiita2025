@@ -57,6 +57,7 @@ variable "secret_names" {
     "gemini-api-key",
     "line_channel_access_token",
     "line_channel_secret",
+    "switchbot_webhook_secret",
   ]
 }
 
@@ -336,6 +337,78 @@ variable "api_gateway_name" {
   default     = ""
 }
 
+variable "enable_monitoring_mother" {
+  description = "If true, deploy monitoring-mother Cloud Run + Scheduler + Firestore indexes."
+  type        = bool
+  default     = false
+}
+
+variable "monitoring_mother_service_name" {
+  description = "Cloud Run service name for monitoring-mother. Empty means auto-generated from environment."
+  type        = string
+  default     = ""
+}
+
+variable "monitoring_mother_image" {
+  description = "Container image URI for monitoring-mother."
+  type        = string
+  default     = ""
+}
+
+variable "monitoring_mother_allow_unauthenticated" {
+  description = "Allow unauthenticated invocation for monitoring-mother webhook endpoint."
+  type        = bool
+  default     = true
+}
+
+variable "monitoring_mother_line_group_id" {
+  description = "LINE group/room/user ID to push anomaly alerts."
+  type        = string
+  default     = ""
+}
+
+variable "monitoring_mother_timezone" {
+  description = "Timezone used for learning and anomaly window calculation."
+  type        = string
+  default     = "Asia/Tokyo"
+}
+
+variable "monitoring_mother_learning_schedule" {
+  description = "Cloud Scheduler cron for daily learning job."
+  type        = string
+  default     = "0 2 * * *"
+}
+
+variable "monitoring_mother_detection_schedule" {
+  description = "Cloud Scheduler cron for anomaly detection job."
+  type        = string
+  default     = "*/30 * * * *"
+}
+
+variable "monitoring_mother_learning_lookback_days" {
+  description = "Lookback range in days for statistical learning."
+  type        = number
+  default     = 30
+}
+
+variable "monitoring_mother_expected_threshold" {
+  description = "Expected activity probability threshold to enter anomaly detection zone."
+  type        = number
+  default     = 0.7
+}
+
+variable "monitoring_mother_inactive_hours" {
+  description = "Inactive duration threshold (hours) for anomaly alerting."
+  type        = number
+  default     = 2
+}
+
+variable "secret_name_switchbot_webhook_secret" {
+  description = "Secret Manager secret name for SwitchBot webhook signature verification."
+  type        = string
+  default     = "switchbot_webhook_secret"
+}
+
 variable "enabled_apis" {
   description = "Google APIs to enable for this project."
   type        = list(string)
@@ -349,6 +422,7 @@ variable "enabled_apis" {
     "iamcredentials.googleapis.com",
     "cloudbuild.googleapis.com",
     "artifactregistry.googleapis.com",
+    "cloudscheduler.googleapis.com",
     "apigateway.googleapis.com",
     "servicemanagement.googleapis.com",
     "servicecontrol.googleapis.com",

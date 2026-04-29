@@ -30,6 +30,9 @@ locals {
     kiosk-gateway = {
       context = "services/kiosk-gateway"
     }
+    monitoring-mother = {
+      context = "services/monitoring-mother"
+    }
   }
 
   dispatcher_push_endpoint_effective = var.dispatcher_push_endpoint != "" ? var.dispatcher_push_endpoint : (
@@ -587,4 +590,34 @@ resource "google_cloudbuild_trigger" "service_images" {
     _CONTEXT_DIR = each.value.context
     _STATIC_TAG  = local.cloud_build_tag
   }
+}
+
+module "monitoring_mother" {
+  count  = var.enable_monitoring_mother && var.monitoring_mother_image != "" ? 1 : 0
+  source = "./modules/monitoring_mother"
+
+  project_id                 = var.project_id
+  region                     = var.region
+  environment                = var.environment
+  service_name               = var.monitoring_mother_service_name
+  firestore_database_id      = local.firestore_database_id
+  container_image            = var.monitoring_mother_image
+  allow_unauthenticated      = var.monitoring_mother_allow_unauthenticated
+  cloud_run_min_instances    = var.cloud_run_min_instances
+  cloud_run_max_instances    = var.cloud_run_max_instances
+  cloud_run_cpu              = var.kiosk_gateway_cpu
+  cloud_run_memory           = var.kiosk_gateway_memory
+  cloud_run_timeout_seconds  = var.cloud_run_timeout_seconds
+  timezone                   = var.monitoring_mother_timezone
+  learning_schedule          = var.monitoring_mother_learning_schedule
+  detection_schedule         = var.monitoring_mother_detection_schedule
+  line_group_id              = var.monitoring_mother_line_group_id
+  learning_lookback_days     = var.monitoring_mother_learning_lookback_days
+  anomaly_expected_threshold = var.monitoring_mother_expected_threshold
+  anomaly_inactive_hours     = var.monitoring_mother_inactive_hours
+
+  switchbot_secret_name                 = var.secret_name_switchbot_webhook_secret
+  line_channel_access_token_secret_name = var.secret_name_line_channel_access_token
+
+  depends_on = [google_project_service.required]
 }

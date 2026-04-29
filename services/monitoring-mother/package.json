@@ -1,0 +1,13 @@
+{
+  "name": "monitoring-mother",
+  "version": "0.1.0",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^7.11.2",
+    "express": "^4.21.2"
+  }
+}
