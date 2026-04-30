@@ -22,6 +22,7 @@ const TZ = process.env.TIMEZONE || "Asia/Tokyo";
 const LOG_WEBHOOK_PAYLOAD = process.env.LOG_WEBHOOK_PAYLOAD === "true";
 const SWITCHBOT_MAX_EVENT_AGE_SECONDS = Number(process.env.SWITCHBOT_MAX_EVENT_AGE_SECONDS || 600);
 const SWITCHBOT_MAX_FUTURE_SKEW_SECONDS = Number(process.env.SWITCHBOT_MAX_FUTURE_SKEW_SECONDS || 30);
+const STORE_NOT_DETECTED_EVENTS = process.env.STORE_NOT_DETECTED_EVENTS === "true";
 const ALLOWED_DEVICE_MACS = (process.env.SWITCHBOT_ALLOWED_DEVICE_MACS || "")
   .split(",")
   .map((v) => v.trim().toUpperCase())
@@ -75,6 +76,11 @@ function nowInTz() {
 }
 
 function parseEventTimestamp(payload) {
+  const normalizedSampleMs = extractSampleTimestampMs(payload);
+  if (normalizedSampleMs) {
+    return new Date(normalizedSampleMs);
+  }
+
   const candidates = [
     payload?.eventTime,
     payload?.timeOfSample,
@@ -211,6 +217,11 @@ function buildWebhookEventSummary(payload) {
     power_state: context?.powerState || null,
     time_of_sample: context?.timeOfSample || payload?.timeOfSample || null,
   };
+}
+
+function isNotDetectedEvent(payload) {
+  const detectionState = String(payload?.context?.detectionState || payload?.detectionState || "").toUpperCase();
+  return detectionState === "NOT_DETECTED";
 }
 
 function isAllowedEvent(payload) {
@@ -353,6 +364,17 @@ app.post("/webhook/switchbot", async (req, res) => {
       });
     }
 
+    if (!STORE_NOT_DETECTED_EVENTS && isNotDetectedEvent(payload)) {
+      console.log(
+        JSON.stringify({
+          severity: "INFO",
+          message: "switchbot webhook not_detected ignored",
+          event: eventSummary,
+        })
+      );
+      return res.status(202).json({ status: "not_detected_ignored" });
+    }
+
     const eventTimestamp = parseEventTimestamp(payload);
     const eventType = extractEventType(payload);
     const deviceId = extractDeviceId(payload);
@@ -417,10 +439,26 @@ app.post("/jobs/learn", async (_req, res) => {
   try {
     const now = new Date();
     const from = new Date(now.getTime() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+    console.log(
+      JSON.stringify({
+        severity: "INFO",
+        message: "learning job started",
+        lookback_days: LOOKBACK_DAYS,
+        from_iso: from.toISOString(),
+        now_iso: now.toISOString(),
+      })
+    );
     const snapshot = await firestore()
       .collection(FIRESTORE_COLLECTION_EVENTS)
       .where("timestamp", ">=", Timestamp.fromDate(from))
       .get();
+    console.log(
+      JSON.stringify({
+        severity: "INFO",
+        message: "learning job scanned events",
+        scanned_events: snapshot.size,
+      })
+    );
 
     const dayKeys = [];
     for (let i = 0; i < LOOKBACK_DAYS; i += 1) {
@@ -452,6 +490,20 @@ app.post("/jobs/learn", async (_req, res) => {
       });
     });
 
+    const weekdaySummary = weekdays.map((w, idx) => ({
+      weekday: idx,
+      total_days: w.days,
+      active_hours_count: w.hourHits.filter((h) => h > 0).length,
+      total_hour_hits: w.hourHits.reduce((sum, h) => sum + h, 0),
+    }));
+    console.log(
+      JSON.stringify({
+        severity: "INFO",
+        message: "learning job weekday summary",
+        weekday_summary: weekdaySummary,
+      })
+    );
+
     const batch = firestore().batch();
     for (let weekday = 0; weekday < 7; weekday += 1) {
       const totalDays = weekdays[weekday].days;
@@ -470,7 +522,11 @@ app.post("/jobs/learn", async (_req, res) => {
       );
     }
     await batch.commit();
-    return res.status(200).json({ status: "ok", scanned_events: snapshot.size });
+    return res.status(200).json({
+      status: "ok",
+      scanned_events: snapshot.size,
+      weekday_summary: weekdaySummary,
+    });
   } catch (error) {
     console.error(
       JSON.stringify({
