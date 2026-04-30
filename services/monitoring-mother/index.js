@@ -104,8 +104,8 @@ function verifySwitchBotSignature(rawBody, receivedSign) {
     .update(rawBody || "")
     .digest("base64");
 
-  const expected = Buffer.from(digest);
-  const actual = Buffer.from(receivedSign);
+  const expected = Buffer.from(digest.trim());
+  const actual = Buffer.from(String(receivedSign).trim());
   if (expected.length !== actual.length) return false;
   return crypto.timingSafeEqual(expected, actual);
 }
@@ -192,8 +192,17 @@ app.get("/healthz", (_req, res) => {
 
 app.post("/webhook/switchbot", async (req, res) => {
   try {
-    const sign = req.get("X-Sign");
+    const sign = req.get("X-Sign") || req.get("sign");
     if (!verifySwitchBotSignature(req.rawBody, sign)) {
+      console.warn(
+        JSON.stringify({
+          severity: "WARNING",
+          message: "switchbot signature verification failed",
+          has_x_sign: Boolean(req.get("X-Sign")),
+          has_sign: Boolean(req.get("sign")),
+          raw_body_length: (req.rawBody || "").length,
+        })
+      );
       return res.status(401).json({ error: "invalid signature" });
     }
 
