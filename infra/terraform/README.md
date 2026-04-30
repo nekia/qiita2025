@@ -113,11 +113,18 @@ Set these variables in `envs/*.tfvars`:
 - `monitoring_mother_detection_schedule` (default every 30 minutes)
 - `monitoring_mother_expected_threshold` (default `0.7`)
 - `monitoring_mother_inactive_hours` (default `2`)
+- `monitoring_mother_log_webhook_payload` (default `false`, enable only for short-term debugging)
 
 Secrets (Secret Manager) used by this service:
 
 - `switchbot_webhook_secret` (`secret_name_switchbot_webhook_secret`)
 - `line_channel_access_token` (`secret_name_line_channel_access_token`)
+- `switchbot_webhook_token` (`secret_name_switchbot_webhook_token`, optional fallback auth token)
+
+Recommended logging posture:
+
+- `development`: set `monitoring_mother_log_webhook_payload = true` only while investigating payloads
+- `production`: keep `monitoring_mother_log_webhook_payload = false`
 
 After apply, webhook URL is available from output:
 
@@ -126,14 +133,19 @@ terraform output monitoring_mother
 ```
 
 Use `switchbot_webhook_endpoint` from that output as SwitchBot webhook destination.
+If you use token fallback auth, append query token:
+`https://<monitoring-mother-run-url>/webhook/switchbot?token=<your_webhook_token>`.
 
 ## SwitchBot Webhook setup notes
 
-1. Set webhook URL to:  
-   `https://<monitoring-mother-run-url>/webhook/switchbot`
+1. Set webhook URL to one of:
+   - Signature-based: `https://<monitoring-mother-run-url>/webhook/switchbot`
+   - Token fallback: `https://<monitoring-mother-run-url>/webhook/switchbot?token=<your_webhook_token>`
 2. Set `switchbot_webhook_secret` in Secret Manager to the same secret used in SwitchBot console.
-3. Verify Cloud Run receives header `X-Sign` and request body as JSON.
-4. Service validates signature and stores events idempotently in Firestore `sb_events`.
+3. If using token fallback, store token value in Secret Manager secret specified by
+   `secret_name_switchbot_webhook_token` (example: `switchbot_webhook_token`).
+4. Service accepts either signature headers (`sign`/`X-Sign`) or query token auth,
+   then stores events idempotently in Firestore `sb_events`.
 5. `sb_state/global.last_detected_at` is updated on accepted motion webhook.
 
 Quick sanity check:

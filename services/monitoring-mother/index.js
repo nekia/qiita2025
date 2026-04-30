@@ -19,6 +19,7 @@ const SWITCHBOT_WEBHOOK_TOKEN = process.env.SWITCHBOT_WEBHOOK_TOKEN || "";
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || "";
 const LINE_GROUP_ID = process.env.LINE_GROUP_ID || "";
 const TZ = process.env.TIMEZONE || "Asia/Tokyo";
+const LOG_WEBHOOK_PAYLOAD = process.env.LOG_WEBHOOK_PAYLOAD === "true";
 const SWITCHBOT_MAX_EVENT_AGE_SECONDS = Number(process.env.SWITCHBOT_MAX_EVENT_AGE_SECONDS || 600);
 const SWITCHBOT_MAX_FUTURE_SKEW_SECONDS = Number(process.env.SWITCHBOT_MAX_FUTURE_SKEW_SECONDS || 30);
 const ALLOWED_DEVICE_MACS = (process.env.SWITCHBOT_ALLOWED_DEVICE_MACS || "")
@@ -198,6 +199,20 @@ function extractDeviceType(payload) {
   return payload?.deviceType || payload?.context?.deviceType || "";
 }
 
+function buildWebhookEventSummary(payload) {
+  const context = payload?.context || {};
+  return {
+    event_type: payload?.eventType || null,
+    event_version: payload?.eventVersion || null,
+    device_type: extractDeviceType(payload) || null,
+    device_mac: extractDeviceId(payload) || null,
+    detection_state: context?.detectionState || null,
+    open_state: context?.openState || null,
+    power_state: context?.powerState || null,
+    time_of_sample: context?.timeOfSample || payload?.timeOfSample || null,
+  };
+}
+
 function isAllowedEvent(payload) {
   const macRaw = extractDeviceId(payload);
   const deviceMac = String(macRaw || "").toUpperCase();
@@ -268,6 +283,29 @@ app.get("/healthz", (_req, res) => {
 
 app.post("/webhook/switchbot", async (req, res) => {
   try {
+    const payload = req.body || {};
+    const eventSummary = buildWebhookEventSummary(payload);
+    console.log(
+      JSON.stringify({
+        severity: "INFO",
+        message: "switchbot webhook received",
+        has_x_sign: Boolean(req.get("X-Sign")),
+        has_sign: Boolean(req.get("sign")),
+        has_query_token: Boolean(req.query?.token),
+        raw_body_length: (req.rawBody || "").length,
+        event: eventSummary,
+      })
+    );
+    if (LOG_WEBHOOK_PAYLOAD) {
+      console.log(
+        JSON.stringify({
+          severity: "INFO",
+          message: "switchbot webhook payload",
+          payload,
+        })
+      );
+    }
+
     const auth = authorizeWebhookRequest(req);
     if (!auth.ok) {
       console.warn(
@@ -284,7 +322,6 @@ app.post("/webhook/switchbot", async (req, res) => {
       return res.status(401).json({ error: "unauthorized webhook request" });
     }
 
-    const payload = req.body || {};
     const replayCheck = validateReplayWindow(payload);
     if (!replayCheck.ok) {
       console.warn(
@@ -300,6 +337,14 @@ app.post("/webhook/switchbot", async (req, res) => {
 
     const filterResult = isAllowedEvent(payload);
     if (!filterResult.allowed) {
+      console.log(
+        JSON.stringify({
+          severity: "INFO",
+          message: "switchbot webhook filtered",
+          event: eventSummary,
+          reason: filterResult.reason,
+        })
+      );
       return res.status(202).json({
         status: "filtered_ignored",
         device_mac: filterResult.deviceMac,
@@ -337,8 +382,24 @@ app.post("/webhook/switchbot", async (req, res) => {
     });
 
     if (alreadyProcessed) {
+      console.log(
+        JSON.stringify({
+          severity: "INFO",
+          message: "switchbot webhook duplicate ignored",
+          event: eventSummary,
+          idempotency_key: idempotencyKey,
+        })
+      );
       return res.status(202).json({ status: "duplicate_ignored" });
     }
+    console.log(
+      JSON.stringify({
+        severity: "INFO",
+        message: "switchbot webhook accepted and stored",
+        event: eventSummary,
+        idempotency_key: idempotencyKey,
+      })
+    );
     return res.status(202).json({ status: "accepted" });
   } catch (error) {
     console.error(

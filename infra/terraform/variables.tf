@@ -367,6 +367,12 @@ variable "monitoring_mother_line_group_id" {
   default     = ""
 }
 
+variable "monitoring_mother_log_webhook_payload" {
+  description = "If true, monitoring-mother logs full webhook payloads."
+  type        = bool
+  default     = false
+}
+
 variable "secret_name_switchbot_webhook_token" {
   description = "Optional Secret Manager secret name for monitoring-mother webhook query token fallback."
   type        = string

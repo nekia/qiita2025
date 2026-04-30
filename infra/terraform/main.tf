@@ -612,6 +612,7 @@ module "monitoring_mother" {
   learning_schedule                   = var.monitoring_mother_learning_schedule
   detection_schedule                  = var.monitoring_mother_detection_schedule
   line_group_id                       = var.monitoring_mother_line_group_id
+  log_webhook_payload                 = var.monitoring_mother_log_webhook_payload
   switchbot_webhook_token_secret_name = var.secret_name_switchbot_webhook_token
   switchbot_allowed_device_macs       = var.monitoring_mother_switchbot_allowed_device_macs
   switchbot_allowed_device_types      = var.monitoring_mother_switchbot_allowed_device_types

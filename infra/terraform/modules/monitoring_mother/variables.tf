@@ -73,6 +73,12 @@ variable "line_group_id" {
   default = ""
 }
 
+variable "log_webhook_payload" {
+  description = "If true, log full webhook payloads in monitoring-mother."
+  type        = bool
+  default     = false
+}
+
 variable "switchbot_webhook_token_secret_name" {
   description = "Optional Secret Manager secret name for webhook URL query token fallback when signature headers are absent."
   type        = string
