@@ -18,6 +18,14 @@ const SWITCHBOT_WEBHOOK_SECRET = process.env.SWITCHBOT_WEBHOOK_SECRET || "";
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || "";
 const LINE_GROUP_ID = process.env.LINE_GROUP_ID || "";
 const TZ = process.env.TIMEZONE || "Asia/Tokyo";
+const ALLOWED_DEVICE_MACS = (process.env.SWITCHBOT_ALLOWED_DEVICE_MACS || "")
+  .split(",")
+  .map((v) => v.trim().toUpperCase())
+  .filter(Boolean);
+const ALLOWED_DEVICE_TYPES = (process.env.SWITCHBOT_ALLOWED_DEVICE_TYPES || "")
+  .split(",")
+  .map((v) => v.trim())
+  .filter(Boolean);
 
 let firestoreClient = null;
 function firestore() {
@@ -110,6 +118,29 @@ function extractDeviceId(payload) {
   return payload?.deviceMac || payload?.deviceId || payload?.context?.deviceMac || "unknown-device";
 }
 
+function extractDeviceType(payload) {
+  return payload?.deviceType || payload?.context?.deviceType || "";
+}
+
+function isAllowedEvent(payload) {
+  const macRaw = extractDeviceId(payload);
+  const deviceMac = String(macRaw || "").toUpperCase();
+  const deviceType = extractDeviceType(payload);
+
+  const macAllowed = ALLOWED_DEVICE_MACS.length === 0 || ALLOWED_DEVICE_MACS.includes(deviceMac);
+  const typeAllowed = ALLOWED_DEVICE_TYPES.length === 0 || ALLOWED_DEVICE_TYPES.includes(deviceType);
+
+  return {
+    allowed: macAllowed && typeAllowed,
+    deviceMac,
+    deviceType,
+    reason: {
+      macAllowed,
+      typeAllowed,
+    },
+  };
+}
+
 async function callLinePush(messageText) {
   if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_GROUP_ID) {
     throw new Error("LINE settings are incomplete");
@@ -167,6 +198,16 @@ app.post("/webhook/switchbot", async (req, res) => {
     }
 
     const payload = req.body || {};
+    const filterResult = isAllowedEvent(payload);
+    if (!filterResult.allowed) {
+      return res.status(202).json({
+        status: "filtered_ignored",
+        device_mac: filterResult.deviceMac,
+        device_type: filterResult.deviceType,
+        reason: filterResult.reason,
+      });
+    }
+
     const eventTimestamp = parseEventTimestamp(payload);
     const eventType = extractEventType(payload);
     const deviceId = extractDeviceId(payload);

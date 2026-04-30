@@ -73,6 +73,18 @@ variable "line_group_id" {
   default = ""
 }
 
+variable "switchbot_allowed_device_macs" {
+  description = "Comma-separated allowlist of SwitchBot device MACs. Empty means allow all."
+  type        = string
+  default     = ""
+}
+
+variable "switchbot_allowed_device_types" {
+  description = "Comma-separated allowlist of SwitchBot device types (example: WoPresence). Empty means allow all."
+  type        = string
+  default     = ""
+}
+
 variable "learning_lookback_days" {
   type    = number
   default = 30

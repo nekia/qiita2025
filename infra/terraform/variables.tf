@@ -367,6 +367,18 @@ variable "monitoring_mother_line_group_id" {
   default     = ""
 }
 
+variable "monitoring_mother_switchbot_allowed_device_macs" {
+  description = "Comma-separated allowlist of SwitchBot device MACs for monitoring-mother webhook ingestion."
+  type        = string
+  default     = ""
+}
+
+variable "monitoring_mother_switchbot_allowed_device_types" {
+  description = "Comma-separated allowlist of SwitchBot device types for monitoring-mother webhook ingestion."
+  type        = string
+  default     = ""
+}
+
 variable "monitoring_mother_timezone" {
   description = "Timezone used for learning and anomaly window calculation."
   type        = string

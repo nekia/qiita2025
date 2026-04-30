@@ -2,7 +2,7 @@ locals {
   env_suffix            = var.environment == "production" ? "" : "-${var.environment}"
   monitoring_service    = var.service_name != "" ? var.service_name : "monitoring-mother${local.env_suffix}"
   runtime_sa_account_id = "monitoring-mother${local.env_suffix}"
-  scheduler_sa_id       = "monitoring-mother-sch${local.env_suffix}"
+  scheduler_sa_id       = "mm-sch${local.env_suffix}"
 }
 
 resource "google_service_account" "runtime" {
@@ -61,6 +61,14 @@ resource "google_cloud_run_v2_service" "monitoring_mother" {
         value = var.line_group_id
       }
       env {
+        name  = "SWITCHBOT_ALLOWED_DEVICE_MACS"
+        value = var.switchbot_allowed_device_macs
+      }
+      env {
+        name  = "SWITCHBOT_ALLOWED_DEVICE_TYPES"
+        value = var.switchbot_allowed_device_types
+      }
+      env {
         name  = "LEARNING_LOOKBACK_DAYS"
         value = tostring(var.learning_lookback_days)
       }
@@ -92,6 +100,11 @@ resource "google_cloud_run_v2_service" "monitoring_mother" {
       }
     }
   }
+
+  depends_on = [
+    google_secret_manager_secret_iam_member.runtime_secret_accessor,
+    google_project_iam_member.runtime_firestore_user,
+  ]
 }
 
 resource "google_cloud_run_service_iam_member" "allow_public" {
