@@ -15,9 +15,12 @@ const ANOMALY_EXPECTED_THRESHOLD = Number(process.env.ANOMALY_EXPECTED_THRESHOLD
 const ANOMALY_INACTIVE_HOURS = Number(process.env.ANOMALY_INACTIVE_HOURS || 2);
 
 const SWITCHBOT_WEBHOOK_SECRET = process.env.SWITCHBOT_WEBHOOK_SECRET || "";
+const SWITCHBOT_WEBHOOK_TOKEN = process.env.SWITCHBOT_WEBHOOK_TOKEN || "";
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || "";
 const LINE_GROUP_ID = process.env.LINE_GROUP_ID || "";
 const TZ = process.env.TIMEZONE || "Asia/Tokyo";
+const SWITCHBOT_MAX_EVENT_AGE_SECONDS = Number(process.env.SWITCHBOT_MAX_EVENT_AGE_SECONDS || 600);
+const SWITCHBOT_MAX_FUTURE_SKEW_SECONDS = Number(process.env.SWITCHBOT_MAX_FUTURE_SKEW_SECONDS || 30);
 const ALLOWED_DEVICE_MACS = (process.env.SWITCHBOT_ALLOWED_DEVICE_MACS || "")
   .split(",")
   .map((v) => v.trim().toUpperCase())
@@ -89,6 +92,41 @@ function parseEventTimestamp(payload) {
   return new Date();
 }
 
+function normalizeEpochMs(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  // SwitchBot samples are usually epoch ms; keep a safety fallback for seconds.
+  return n < 1e12 ? n * 1000 : n;
+}
+
+function extractSampleTimestampMs(payload) {
+  return (
+    normalizeEpochMs(payload?.timeOfSample) ||
+    normalizeEpochMs(payload?.context?.timeOfSample) ||
+    normalizeEpochMs(payload?.timestamp)
+  );
+}
+
+function validateReplayWindow(payload) {
+  const sampleMs = extractSampleTimestampMs(payload);
+  if (!sampleMs) {
+    return { ok: false, reason: "missing_time_of_sample" };
+  }
+
+  const nowMs = Date.now();
+  const ageMs = nowMs - sampleMs;
+  const maxAgeMs = SWITCHBOT_MAX_EVENT_AGE_SECONDS * 1000;
+  const maxFutureSkewMs = SWITCHBOT_MAX_FUTURE_SKEW_SECONDS * 1000;
+
+  if (ageMs > maxAgeMs) {
+    return { ok: false, reason: "event_too_old", age_ms: ageMs };
+  }
+  if (ageMs < -maxFutureSkewMs) {
+    return { ok: false, reason: "event_from_future", age_ms: ageMs };
+  }
+  return { ok: true };
+}
+
 function computeIdempotencyKey(rawBody) {
   return crypto.createHash("sha256").update(rawBody || "").digest("hex");
 }
@@ -108,6 +146,44 @@ function verifySwitchBotSignature(rawBody, receivedSign) {
   const actual = Buffer.from(String(receivedSign).trim());
   if (expected.length !== actual.length) return false;
   return crypto.timingSafeEqual(expected, actual);
+}
+
+function timingSafeEqualString(expected, actual) {
+  const a = Buffer.from(String(expected || ""));
+  const b = Buffer.from(String(actual || ""));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function authorizeWebhookRequest(req) {
+  const signature = req.get("X-Sign") || req.get("sign");
+  if (signature) {
+    return {
+      ok: verifySwitchBotSignature(req.rawBody, signature),
+      method: "signature",
+      hasXSign: Boolean(req.get("X-Sign")),
+      hasSign: Boolean(req.get("sign")),
+    };
+  }
+
+  // Some SwitchBot webhook deliveries do not include signature headers.
+  // In that case we can require a pre-shared token in webhook URL query.
+  const queryToken = req.query?.token;
+  if (SWITCHBOT_WEBHOOK_TOKEN) {
+    return {
+      ok: timingSafeEqualString(SWITCHBOT_WEBHOOK_TOKEN, queryToken),
+      method: "query_token",
+      hasXSign: false,
+      hasSign: false,
+    };
+  }
+
+  return {
+    ok: false,
+    method: "missing_auth",
+    hasXSign: false,
+    hasSign: false,
+  };
 }
 
 function extractEventType(payload) {
@@ -192,21 +268,36 @@ app.get("/healthz", (_req, res) => {
 
 app.post("/webhook/switchbot", async (req, res) => {
   try {
-    const sign = req.get("X-Sign") || req.get("sign");
-    if (!verifySwitchBotSignature(req.rawBody, sign)) {
+    const auth = authorizeWebhookRequest(req);
+    if (!auth.ok) {
       console.warn(
         JSON.stringify({
           severity: "WARNING",
-          message: "switchbot signature verification failed",
-          has_x_sign: Boolean(req.get("X-Sign")),
-          has_sign: Boolean(req.get("sign")),
+          message: "switchbot webhook authorization failed",
+          auth_method: auth.method,
+          has_x_sign: auth.hasXSign,
+          has_sign: auth.hasSign,
+          has_query_token: Boolean(req.query?.token),
           raw_body_length: (req.rawBody || "").length,
         })
       );
-      return res.status(401).json({ error: "invalid signature" });
+      return res.status(401).json({ error: "unauthorized webhook request" });
     }
 
     const payload = req.body || {};
+    const replayCheck = validateReplayWindow(payload);
+    if (!replayCheck.ok) {
+      console.warn(
+        JSON.stringify({
+          severity: "WARNING",
+          message: "switchbot webhook replay-window check failed",
+          reason: replayCheck.reason,
+          age_ms: replayCheck.age_ms,
+        })
+      );
+      return res.status(401).json({ error: "stale or invalid event timestamp" });
+    }
+
     const filterResult = isAllowedEvent(payload);
     if (!filterResult.allowed) {
       return res.status(202).json({

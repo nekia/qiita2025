@@ -73,6 +73,12 @@ variable "line_group_id" {
   default = ""
 }
 
+variable "switchbot_webhook_token_secret_name" {
+  description = "Optional Secret Manager secret name for webhook URL query token fallback when signature headers are absent."
+  type        = string
+  default     = ""
+}
+
 variable "switchbot_allowed_device_macs" {
   description = "Comma-separated allowlist of SwitchBot device MACs. Empty means allow all."
   type        = string

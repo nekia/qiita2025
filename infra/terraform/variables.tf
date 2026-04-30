@@ -367,6 +367,12 @@ variable "monitoring_mother_line_group_id" {
   default     = ""
 }
 
+variable "secret_name_switchbot_webhook_token" {
+  description = "Optional Secret Manager secret name for monitoring-mother webhook query token fallback."
+  type        = string
+  default     = ""
+}
+
 variable "monitoring_mother_switchbot_allowed_device_macs" {
   description = "Comma-separated allowlist of SwitchBot device MACs for monitoring-mother webhook ingestion."
   type        = string

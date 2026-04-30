@@ -52,6 +52,7 @@ monitoring_mother_service_name                   = "monitoring-mother-dev"
 monitoring_mother_image                          = "asia-northeast1-docker.pkg.dev/line-msg-kiosk-board-dev/kiosk/monitoring-mother:dev"
 monitoring_mother_allow_unauthenticated          = true
 monitoring_mother_line_group_id                  = "U9175866d2e6aacfdb9a5204710a80c05"
+secret_name_switchbot_webhook_token              = "switchbot_webhook_token"
 monitoring_mother_switchbot_allowed_device_macs  = "B0E9FECE1D92,FCF88D0D39C6"
 monitoring_mother_switchbot_allowed_device_types = "WoPresence,Motion Sensor"
 monitoring_mother_timezone                       = "Asia/Tokyo"

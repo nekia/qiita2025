@@ -60,6 +60,18 @@ resource "google_cloud_run_v2_service" "monitoring_mother" {
         name  = "LINE_GROUP_ID"
         value = var.line_group_id
       }
+      dynamic "env" {
+        for_each = var.switchbot_webhook_token_secret_name != "" ? [var.switchbot_webhook_token_secret_name] : []
+        content {
+          name = "SWITCHBOT_WEBHOOK_TOKEN"
+          value_source {
+            secret_key_ref {
+              secret  = env.value
+              version = "latest"
+            }
+          }
+        }
+      }
       env {
         name  = "SWITCHBOT_ALLOWED_DEVICE_MACS"
         value = var.switchbot_allowed_device_macs
@@ -131,7 +143,13 @@ resource "google_project_iam_member" "runtime_firestore_user" {
 }
 
 resource "google_secret_manager_secret_iam_member" "runtime_secret_accessor" {
-  for_each  = toset([var.switchbot_secret_name, var.line_channel_access_token_secret_name])
+  for_each = toset(
+    compact([
+      var.switchbot_secret_name,
+      var.line_channel_access_token_secret_name,
+      var.switchbot_webhook_token_secret_name,
+    ])
+  )
   project   = var.project_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.runtime.email}"
