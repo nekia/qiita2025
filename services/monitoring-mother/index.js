@@ -380,7 +380,7 @@ function buildHourlyChartConfig(hourlyCounts, prevDayHourlyCounts, titleDateKey)
       labels,
       datasets: [
         {
-          label: "センサー検出回数",
+          label: "当日",
           data: hourlyCounts,
           backgroundColor: "rgba(54, 162, 235, 0.75)",
           borderColor: "rgba(54, 162, 235, 1)",
@@ -388,14 +388,10 @@ function buildHourlyChartConfig(hourlyCounts, prevDayHourlyCounts, titleDateKey)
         },
         {
           label: "前日",
-          type: "line",
           data: prevDayHourlyCounts,
-          borderColor: "rgba(120, 120, 120, 0.95)",
-          backgroundColor: "rgba(120, 120, 120, 0.15)",
-          borderWidth: 3,
-          pointRadius: 2,
-          tension: 0.2,
-          fill: false,
+          backgroundColor: "rgba(140, 140, 140, 0.65)",
+          borderColor: "rgba(120, 120, 120, 1)",
+          borderWidth: 1,
         },
       ],
     },
@@ -405,14 +401,14 @@ function buildHourlyChartConfig(hourlyCounts, prevDayHourlyCounts, titleDateKey)
           display: true,
           text: `日次センサー検出サマリ (${titleDateKey})`,
           font: {
-            size: 26,
+            size: 52,
           },
         },
         legend: {
           display: true,
           labels: {
             font: {
-              size: 18,
+              size: 36,
             },
           },
         },
@@ -421,14 +417,14 @@ function buildHourlyChartConfig(hourlyCounts, prevDayHourlyCounts, titleDateKey)
         x: {
           ticks: {
             font: {
-              size: 16,
+              size: 32,
             },
           },
           title: {
             display: true,
             text: "時刻",
             font: {
-              size: 18,
+              size: 36,
             },
           },
         },
@@ -437,14 +433,14 @@ function buildHourlyChartConfig(hourlyCounts, prevDayHourlyCounts, titleDateKey)
           ticks: {
             precision: 0,
             font: {
-              size: 16,
+              size: 32,
             },
           },
           title: {
             display: true,
             text: "検出回数",
             font: {
-              size: 18,
+              size: 36,
             },
           },
         },
