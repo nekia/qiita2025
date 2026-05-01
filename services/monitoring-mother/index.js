@@ -372,9 +372,9 @@ async function callLinePushMessages(messages, targetId = LINE_GROUP_ID) {
   }
 }
 
-function buildHourlyChartUrl(hourlyCounts, prevDayHourlyCounts, titleDateKey) {
+function buildHourlyChartConfig(hourlyCounts, prevDayHourlyCounts, titleDateKey) {
   const labels = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}h`);
-  const chartConfig = {
+  return {
     type: "bar",
     data: {
       labels,
@@ -451,6 +451,28 @@ function buildHourlyChartUrl(hourlyCounts, prevDayHourlyCounts, titleDateKey) {
       },
     },
   };
+}
+
+async function buildHourlyChartUrl(hourlyCounts, prevDayHourlyCounts, titleDateKey) {
+  const chartConfig = buildHourlyChartConfig(hourlyCounts, prevDayHourlyCounts, titleDateKey);
+  const response = await fetch("https://quickchart.io/chart/create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chart: chartConfig,
+      width: 1100,
+      height: 620,
+      format: "png",
+      backgroundColor: "white",
+    }),
+  });
+  if (response.ok) {
+    const json = await response.json();
+    if (json?.url) {
+      return json.url;
+    }
+  }
+  // Fallback to direct URL when short URL creation fails.
   return `https://quickchart.io/chart?width=1100&height=620&format=png&backgroundColor=white&c=${encodeURIComponent(JSON.stringify(chartConfig))}`;
 }
 
@@ -885,7 +907,11 @@ app.post("/jobs/daily-summary", async (_req, res) => {
       const daySummary = summarizeDailyActivity(events, targetDateKey, siteKey);
       const prevDateKey = getPreviousDateKeyFromTzDateKey(targetDateKey);
       const prevDaySummary = summarizeDailyActivity(events, prevDateKey, siteKey);
-      const chartUrl = buildHourlyChartUrl(daySummary.hourlyCounts, prevDaySummary.hourlyCounts, `${targetDateKey} ${siteKey}`);
+      const chartUrl = await buildHourlyChartUrl(
+        daySummary.hourlyCounts,
+        prevDaySummary.hourlyCounts,
+        `${targetDateKey} ${siteKey}`
+      );
       const text = [
         `日次見守りサマリ (${siteKey})`,
         `日付: ${targetDateKey} (${TZ})`,
