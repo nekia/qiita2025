@@ -106,6 +106,10 @@ resource "google_cloud_run_v2_service" "monitoring_mother" {
         name  = "LOG_WEBHOOK_PAYLOAD"
         value = tostring(var.log_webhook_payload)
       }
+      env {
+        name  = "ENABLE_TEST_ENDPOINTS"
+        value = tostring(var.enable_test_endpoints)
+      }
       dynamic "env" {
         for_each = var.switchbot_webhook_token_secret_name != "" ? [var.switchbot_webhook_token_secret_name] : []
         content {

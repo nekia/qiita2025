@@ -121,6 +121,7 @@ Set these variables in `envs/*.tfvars`:
 - `monitoring_mother_expected_threshold` (default `0.7`)
 - `monitoring_mother_inactive_hours` (default `2`)
 - `monitoring_mother_log_webhook_payload` (default `false`, enable only for short-term debugging)
+- `monitoring_mother_enable_test_endpoints` (default `false`, enable only in development)
 
 Secrets (Secret Manager) used by this service:
 
@@ -134,6 +135,22 @@ Recommended logging posture:
 
 - `development`: set `monitoring_mother_log_webhook_payload = true` only while investigating payloads
 - `production`: keep `monitoring_mother_log_webhook_payload = false`
+
+LINE destination variable usage:
+
+- `monitoring_mother_line_group_id`:
+  default destination when no per-site mapping matches.
+- `monitoring_mother_line_group_id_map`:
+  comma-separated override map used first.
+  key can be logical site key (recommended) or device MAC.
+  example: `MOTHER_HOME:Caaaa...,WIFE_MOTHER_HOME:Cbbbb...`
+- resolution order in runtime:
+  1) `LINE_GROUP_ID_MAP[siteKey]`
+  2) `LINE_GROUP_ID_MAP[deviceMac]`
+  3) fallback `LINE_GROUP_ID`
+
+If secret names are configured (`secret_name_monitoring_mother_line_group_id*`),
+those secret values are used instead of plain tfvars values.
 
 After apply, webhook URL is available from output:
 
@@ -171,6 +188,34 @@ Then confirm:
 - Scheduler jobs exist (`*-learn`, `*-detect`)
 - Firestore has collections: `sb_events`, `sb_stats`, `sb_state`
 - LINE alert is sent only once while `current_mode = ALERT`
+
+## monitoring-mother test endpoints (development only)
+
+When `monitoring_mother_enable_test_endpoints = true`, the following endpoints are available:
+
+- `POST /test/seed-anomaly`
+  - purpose: create anomaly test condition for a specific site
+  - params: `site_id` (required), optional `weekday`, `hour`, `expected`, `inactive_hours`
+- `POST /test/reset-site`
+  - purpose: reset a site state back to normal quickly
+  - params: `site_id` (required)
+
+Example test flow:
+
+```bash
+# 1) Seed anomaly condition for MOTHER_HOME
+curl -sS -X POST "https://<monitoring-mother-url>/test/seed-anomaly" \
+  -H "Content-Type: application/json" \
+  -d '{"site_id":"MOTHER_HOME","expected":1,"inactive_hours":3}'
+
+# 2) Run detect job and verify LINE alert behavior
+curl -sS -X POST "https://<monitoring-mother-url>/jobs/detect"
+
+# 3) Reset test site
+curl -sS -X POST "https://<monitoring-mother-url>/test/reset-site" \
+  -H "Content-Type: application/json" \
+  -d '{"site_id":"MOTHER_HOME"}'
+```
 
 ## Apply Terraform with Cloud Run
 

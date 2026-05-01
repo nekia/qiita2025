@@ -53,6 +53,7 @@ monitoring_mother_line_group_id_map              = ""
 secret_name_monitoring_mother_line_group_id_map  = "monitoring_mother_line_group_id_map"
 monitoring_mother_switchbot_site_map             = "B0E9FECE1D92:MOTHER_HOME,FCF88D0D39C6:WIFE_MOTHER_HOME"
 monitoring_mother_log_webhook_payload            = false
+monitoring_mother_enable_test_endpoints          = false
 secret_name_switchbot_webhook_token              = "switchbot_webhook_token"
 monitoring_mother_switchbot_allowed_device_macs  = "B0E9FECE1D92,FCF88D0D39C6"
 monitoring_mother_switchbot_allowed_device_types = "WoPresence,Motion Sensor"

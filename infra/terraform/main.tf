@@ -620,6 +620,7 @@ module "monitoring_mother" {
   line_group_id_map_secret_name       = var.secret_name_monitoring_mother_line_group_id_map
   switchbot_site_map                  = var.monitoring_mother_switchbot_site_map
   log_webhook_payload                 = var.monitoring_mother_log_webhook_payload
+  enable_test_endpoints               = var.monitoring_mother_enable_test_endpoints
   switchbot_webhook_token_secret_name = var.secret_name_switchbot_webhook_token
   switchbot_allowed_device_macs       = var.monitoring_mother_switchbot_allowed_device_macs
   switchbot_allowed_device_types      = var.monitoring_mother_switchbot_allowed_device_types

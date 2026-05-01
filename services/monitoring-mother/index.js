@@ -19,9 +19,11 @@ const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || "";
 const LINE_GROUP_ID = process.env.LINE_GROUP_ID || "";
 const LINE_GROUP_ID_MAP_RAW = process.env.LINE_GROUP_ID_MAP || "";
 const SWITCHBOT_SITE_MAP_RAW = process.env.SWITCHBOT_SITE_MAP || "";
+const SITE_LABEL_MAP_RAW = process.env.SITE_LABEL_MAP || "MOTHER_HOME:高輪,WIFE_MOTHER_HOME:東郷";
 const TZ = process.env.TIMEZONE || "Asia/Tokyo";
 const LOG_WEBHOOK_PAYLOAD = process.env.LOG_WEBHOOK_PAYLOAD === "true";
 const DAILY_SUMMARY_LOOKBACK_HOURS = Number(process.env.DAILY_SUMMARY_LOOKBACK_HOURS || 48);
+const ENABLE_TEST_ENDPOINTS = process.env.ENABLE_TEST_ENDPOINTS === "true";
 const SWITCHBOT_MAX_EVENT_AGE_SECONDS = Number(process.env.SWITCHBOT_MAX_EVENT_AGE_SECONDS || 600);
 const SWITCHBOT_MAX_FUTURE_SKEW_SECONDS = Number(process.env.SWITCHBOT_MAX_FUTURE_SKEW_SECONDS || 30);
 const STORE_NOT_DETECTED_EVENTS = process.env.STORE_NOT_DETECTED_EVENTS === "true";
@@ -52,6 +54,7 @@ function parseKeyValueMap(raw) {
 
 const LINE_GROUP_ID_MAP = parseKeyValueMap(LINE_GROUP_ID_MAP_RAW);
 const SWITCHBOT_SITE_MAP = parseKeyValueMap(SWITCHBOT_SITE_MAP_RAW);
+const SITE_LABEL_MAP = parseKeyValueMap(SITE_LABEL_MAP_RAW);
 
 let firestoreClient = null;
 function firestore() {
@@ -282,6 +285,17 @@ function resolveEventSiteId(eventData) {
   return resolveSiteKey(eventData?.device_id);
 }
 
+function resolveSiteLabel(siteKey) {
+  const key = String(siteKey || "").toUpperCase();
+  return SITE_LABEL_MAP[key] || siteKey;
+}
+
+function formatLocalDateTimeNoTz(date) {
+  if (!date) return "不明";
+  const p = getTzDateParts(date);
+  return `${p.month}/${p.day} ${p.timeText}`;
+}
+
 function buildWebhookEventSummary(payload) {
   const context = payload?.context || {};
   return {
@@ -358,7 +372,7 @@ async function callLinePushMessages(messages, targetId = LINE_GROUP_ID) {
   }
 }
 
-function buildHourlyChartUrl(hourlyCounts, titleDateKey) {
+function buildHourlyChartUrl(hourlyCounts, prevDayHourlyCounts, titleDateKey) {
   const labels = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}h`);
   const chartConfig = {
     type: "bar",
@@ -366,11 +380,22 @@ function buildHourlyChartUrl(hourlyCounts, titleDateKey) {
       labels,
       datasets: [
         {
-          label: "Motion detections",
+          label: "センサー検出回数",
           data: hourlyCounts,
           backgroundColor: "rgba(54, 162, 235, 0.75)",
           borderColor: "rgba(54, 162, 235, 1)",
           borderWidth: 1,
+        },
+        {
+          label: "前日",
+          type: "line",
+          data: prevDayHourlyCounts,
+          borderColor: "rgba(120, 120, 120, 0.95)",
+          backgroundColor: "rgba(120, 120, 120, 0.15)",
+          borderWidth: 3,
+          pointRadius: 2,
+          tension: 0.2,
+          fill: false,
         },
       ],
     },
@@ -378,19 +403,55 @@ function buildHourlyChartUrl(hourlyCounts, titleDateKey) {
       plugins: {
         title: {
           display: true,
-          text: `Daily Motion Summary (${titleDateKey})`,
+          text: `日次センサー検出サマリ (${titleDateKey})`,
+          font: {
+            size: 26,
+          },
         },
-        legend: { display: false },
+        legend: {
+          display: true,
+          labels: {
+            font: {
+              size: 18,
+            },
+          },
+        },
       },
       scales: {
+        x: {
+          ticks: {
+            font: {
+              size: 16,
+            },
+          },
+          title: {
+            display: true,
+            text: "時刻",
+            font: {
+              size: 18,
+            },
+          },
+        },
         y: {
           beginAtZero: true,
-          ticks: { precision: 0 },
+          ticks: {
+            precision: 0,
+            font: {
+              size: 16,
+            },
+          },
+          title: {
+            display: true,
+            text: "検出回数",
+            font: {
+              size: 18,
+            },
+          },
         },
       },
     },
   };
-  return `https://quickchart.io/chart?width=1000&height=520&format=png&c=${encodeURIComponent(JSON.stringify(chartConfig))}`;
+  return `https://quickchart.io/chart?width=1100&height=620&format=png&backgroundColor=white&c=${encodeURIComponent(JSON.stringify(chartConfig))}`;
 }
 
 function summarizeDailyActivity(dayEvents, targetDateKey, siteKey) {
@@ -421,6 +482,13 @@ function summarizeDailyActivity(dayEvents, targetDateKey, siteKey) {
     wakeupTime: morning?.timeText || "N/A",
     bedtimeTime: bedtime?.timeText || "N/A",
   };
+}
+
+function getPreviousDateKeyFromTzDateKey(dateKey) {
+  const [year, month, day] = String(dateKey).split("-").map(Number);
+  const dt = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  const prev = new Date(dt.getTime() - 24 * 60 * 60 * 1000);
+  return getTzDateParts(prev).dateKey;
 }
 
 async function listTargetSites() {
@@ -729,7 +797,7 @@ app.post("/jobs/learn", async (_req, res) => {
 
 app.post("/jobs/detect", async (_req, res) => {
   try {
-    const { dayOfWeek, hour, isoLocal } = nowInTz();
+    const { dayOfWeek, hour } = nowInTz();
     const siteKeys = await listTargetSites();
     const results = [];
 
@@ -750,8 +818,10 @@ app.post("/jobs/detect", async (_req, res) => {
 
       if (shouldAlert && currentMode !== "ALERT") {
         const inactiveHours = (inactiveMs / (60 * 60 * 1000)).toFixed(1);
+        const siteLabel = resolveSiteLabel(siteKey);
+        const lastDetectedText = formatLocalDateTimeNoTz(lastDetectedAt);
         await callLinePush(
-          `見守りアラート(${siteKey}): 期待活動時間帯(${hour}時台, p=${expected})に ${inactiveHours} 時間検知がありません。(${isoLocal} ${TZ})`,
+          `${siteLabel}：${lastDetectedText}から${inactiveHours}時間以上動きが検知されていません`,
           lineTarget
         );
         await stateRef.set(
@@ -813,11 +883,14 @@ app.post("/jobs/daily-summary", async (_req, res) => {
 
     for (const siteKey of siteKeys) {
       const daySummary = summarizeDailyActivity(events, targetDateKey, siteKey);
-      const chartUrl = buildHourlyChartUrl(daySummary.hourlyCounts, `${targetDateKey} ${siteKey}`);
+      const prevDateKey = getPreviousDateKeyFromTzDateKey(targetDateKey);
+      const prevDaySummary = summarizeDailyActivity(events, prevDateKey, siteKey);
+      const chartUrl = buildHourlyChartUrl(daySummary.hourlyCounts, prevDaySummary.hourlyCounts, `${targetDateKey} ${siteKey}`);
       const text = [
         `日次見守りサマリ (${siteKey})`,
         `日付: ${targetDateKey} (${TZ})`,
         `検知件数: ${daySummary.totalDetections}`,
+        `前日検知件数: ${prevDaySummary.totalDetections}`,
         `起床推定: ${daySummary.wakeupTime}`,
         `就寝推定: ${daySummary.bedtimeTime}`,
       ].join("\n");
@@ -876,6 +949,89 @@ app.post("/jobs/mark-detected", async (_req, res) => {
     const siteKey = toDocSafeKey(_req.query?.site_id || "manual");
     await updateStateOnDetection(siteKey, new Date());
     return res.status(200).json({ status: "ok" });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/test/seed-anomaly", async (req, res) => {
+  if (!ENABLE_TEST_ENDPOINTS) {
+    return res.status(404).json({ error: "not found" });
+  }
+  try {
+    const now = new Date();
+    const nowTz = nowInTz();
+    const siteId = toDocSafeKey(req.body?.site_id || req.query?.site_id);
+    if (!siteId) {
+      return res.status(400).json({ error: "site_id is required" });
+    }
+    const weekday = Number.isFinite(Number(req.body?.weekday)) ? Number(req.body.weekday) : nowTz.dayOfWeek;
+    const hour = Number.isFinite(Number(req.body?.hour)) ? Number(req.body.hour) : nowTz.hour;
+    const expected = Number.isFinite(Number(req.body?.expected)) ? Number(req.body.expected) : 1;
+    const inactiveHours = Number.isFinite(Number(req.body?.inactive_hours))
+      ? Number(req.body.inactive_hours)
+      : ANOMALY_INACTIVE_HOURS + 1;
+
+    const statsRef = firestore().collection(FIRESTORE_COLLECTION_STATS).doc(buildStatsDocId(siteId, weekday));
+    const stateRef = firestore().collection(FIRESTORE_COLLECTION_STATE).doc(buildStateDocId(siteId));
+
+    const statsSnap = await statsRef.get();
+    const current = statsSnap.exists ? statsSnap.data()?.hourly_probability : null;
+    const hourly = Array.isArray(current) && current.length === 24 ? [...current] : new Array(24).fill(0);
+    hourly[hour] = expected;
+
+    await Promise.all([
+      statsRef.set(
+        {
+          site_id: siteId,
+          day_of_week: weekday,
+          hourly_probability: hourly,
+        },
+        { merge: true }
+      ),
+      stateRef.set(
+        {
+          site_id: siteId,
+          current_mode: "NORMAL",
+          last_detected_at: Timestamp.fromDate(new Date(now.getTime() - inactiveHours * 60 * 60 * 1000)),
+        },
+        { merge: true }
+      ),
+    ]);
+
+    return res.status(200).json({
+      status: "ok",
+      site_id: siteId,
+      weekday,
+      hour,
+      expected,
+      inactive_hours: inactiveHours,
+      next_step: "POST /jobs/detect",
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/test/reset-site", async (req, res) => {
+  if (!ENABLE_TEST_ENDPOINTS) {
+    return res.status(404).json({ error: "not found" });
+  }
+  try {
+    const siteId = toDocSafeKey(req.body?.site_id || req.query?.site_id);
+    if (!siteId) {
+      return res.status(400).json({ error: "site_id is required" });
+    }
+    const stateRef = firestore().collection(FIRESTORE_COLLECTION_STATE).doc(buildStateDocId(siteId));
+    await stateRef.set(
+      {
+        site_id: siteId,
+        current_mode: "NORMAL",
+        last_detected_at: Timestamp.fromDate(new Date()),
+      },
+      { merge: true }
+    );
+    return res.status(200).json({ status: "ok", site_id: siteId });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }

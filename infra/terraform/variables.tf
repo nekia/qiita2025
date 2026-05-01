@@ -397,6 +397,12 @@ variable "monitoring_mother_log_webhook_payload" {
   default     = false
 }
 
+variable "monitoring_mother_enable_test_endpoints" {
+  description = "If true, monitoring-mother exposes dev/test helper endpoints."
+  type        = bool
+  default     = false
+}
+
 variable "secret_name_switchbot_webhook_token" {
   description = "Optional Secret Manager secret name for monitoring-mother webhook query token fallback."
   type        = string

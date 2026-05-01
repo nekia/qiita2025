@@ -121,6 +121,12 @@ variable "log_webhook_payload" {
   default     = false
 }
 
+variable "enable_test_endpoints" {
+  description = "If true, enable test-only endpoints in monitoring-mother."
+  type        = bool
+  default     = false
+}
+
 variable "switchbot_webhook_token_secret_name" {
   description = "Optional Secret Manager secret name for webhook URL query token fallback when signature headers are absent."
   type        = string
