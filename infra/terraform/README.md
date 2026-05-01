@@ -111,6 +111,13 @@ Set these variables in `envs/*.tfvars`:
 - `monitoring_mother_line_group_id` (LINE group/room/user ID for alerts)
 - `monitoring_mother_learning_schedule` (default daily)
 - `monitoring_mother_detection_schedule` (default every 30 minutes)
+- `monitoring_mother_enable_daily_summary` (default `false`)
+- `monitoring_mother_daily_summary_schedule` (default `0 23 * * *`)
+- `monitoring_mother_daily_summary_lookback_hours` (default `48`)
+- `monitoring_mother_switchbot_site_map` (device MAC -> logical site key)
+- `monitoring_mother_line_group_id_map` (site key or device MAC -> LINE target ID)
+- `secret_name_monitoring_mother_line_group_id` (optional Secret Manager key for `LINE_GROUP_ID`)
+- `secret_name_monitoring_mother_line_group_id_map` (optional Secret Manager key for `LINE_GROUP_ID_MAP`)
 - `monitoring_mother_expected_threshold` (default `0.7`)
 - `monitoring_mother_inactive_hours` (default `2`)
 - `monitoring_mother_log_webhook_payload` (default `false`, enable only for short-term debugging)
@@ -120,6 +127,8 @@ Secrets (Secret Manager) used by this service:
 - `switchbot_webhook_secret` (`secret_name_switchbot_webhook_secret`)
 - `line_channel_access_token` (`secret_name_line_channel_access_token`)
 - `switchbot_webhook_token` (`secret_name_switchbot_webhook_token`, optional fallback auth token)
+- `monitoring_mother_line_group_id` (`secret_name_monitoring_mother_line_group_id`, optional)
+- `monitoring_mother_line_group_id_map` (`secret_name_monitoring_mother_line_group_id_map`, optional)
 
 Recommended logging posture:
 

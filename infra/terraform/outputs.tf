@@ -77,6 +77,7 @@ output "monitoring_mother" {
     switchbot_webhook_endpoint    = module.monitoring_mother[0].webhook_url
     learning_scheduler_job_name   = module.monitoring_mother[0].learning_job_name
     detection_scheduler_job_name  = module.monitoring_mother[0].detection_job_name
+    daily_summary_job_name        = module.monitoring_mother[0].daily_summary_job_name
     runtime_service_account_email = module.monitoring_mother[0].runtime_service_account_email
   } : null
 }

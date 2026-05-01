@@ -18,6 +18,10 @@ output "detection_job_name" {
   value = google_cloud_scheduler_job.detection.name
 }
 
+output "daily_summary_job_name" {
+  value = var.enable_daily_summary ? google_cloud_scheduler_job.daily_summary[0].name : null
+}
+
 output "runtime_service_account_email" {
   value = google_service_account.runtime.email
 }

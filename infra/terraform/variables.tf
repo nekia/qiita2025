@@ -367,6 +367,30 @@ variable "monitoring_mother_line_group_id" {
   default     = ""
 }
 
+variable "secret_name_monitoring_mother_line_group_id" {
+  description = "Optional Secret Manager secret name for monitoring-mother LINE_GROUP_ID."
+  type        = string
+  default     = ""
+}
+
+variable "monitoring_mother_line_group_id_map" {
+  description = "Comma-separated map for per-site or per-device LINE notification targets."
+  type        = string
+  default     = ""
+}
+
+variable "secret_name_monitoring_mother_line_group_id_map" {
+  description = "Optional Secret Manager secret name for monitoring-mother LINE_GROUP_ID_MAP."
+  type        = string
+  default     = ""
+}
+
+variable "monitoring_mother_switchbot_site_map" {
+  description = "Comma-separated map from SwitchBot device MAC to logical site key."
+  type        = string
+  default     = ""
+}
+
 variable "monitoring_mother_log_webhook_payload" {
   description = "If true, monitoring-mother logs full webhook payloads."
   type        = bool
@@ -407,6 +431,24 @@ variable "monitoring_mother_detection_schedule" {
   description = "Cloud Scheduler cron for anomaly detection job."
   type        = string
   default     = "*/30 * * * *"
+}
+
+variable "monitoring_mother_enable_daily_summary" {
+  description = "If true, schedule daily LINE activity summary."
+  type        = bool
+  default     = false
+}
+
+variable "monitoring_mother_daily_summary_schedule" {
+  description = "Cloud Scheduler cron for daily summary job."
+  type        = string
+  default     = "0 23 * * *"
+}
+
+variable "monitoring_mother_daily_summary_lookback_hours" {
+  description = "Hours to look back when building daily summary chart."
+  type        = number
+  default     = 48
 }
 
 variable "monitoring_mother_learning_lookback_days" {

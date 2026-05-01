@@ -56,9 +56,51 @@ resource "google_cloud_run_v2_service" "monitoring_mother" {
         name  = "TIMEZONE"
         value = var.timezone
       }
+      dynamic "env" {
+        for_each = var.line_group_id_secret_name != "" ? [var.line_group_id_secret_name] : []
+        content {
+          name = "LINE_GROUP_ID"
+          value_source {
+            secret_key_ref {
+              secret  = env.value
+              version = "latest"
+            }
+          }
+        }
+      }
+      dynamic "env" {
+        for_each = var.line_group_id_secret_name == "" ? [var.line_group_id] : []
+        content {
+          name  = "LINE_GROUP_ID"
+          value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = var.line_group_id_map_secret_name != "" ? [var.line_group_id_map_secret_name] : []
+        content {
+          name = "LINE_GROUP_ID_MAP"
+          value_source {
+            secret_key_ref {
+              secret  = env.value
+              version = "latest"
+            }
+          }
+        }
+      }
+      dynamic "env" {
+        for_each = var.line_group_id_map_secret_name == "" ? [var.line_group_id_map] : []
+        content {
+          name  = "LINE_GROUP_ID_MAP"
+          value = env.value
+        }
+      }
       env {
-        name  = "LINE_GROUP_ID"
-        value = var.line_group_id
+        name  = "SWITCHBOT_SITE_MAP"
+        value = var.switchbot_site_map
+      }
+      env {
+        name  = "DAILY_SUMMARY_LOOKBACK_HOURS"
+        value = tostring(var.daily_summary_lookback_hours)
       }
       env {
         name  = "LOG_WEBHOOK_PAYLOAD"
@@ -152,6 +194,8 @@ resource "google_secret_manager_secret_iam_member" "runtime_secret_accessor" {
       var.switchbot_secret_name,
       var.line_channel_access_token_secret_name,
       var.switchbot_webhook_token_secret_name,
+      var.line_group_id_secret_name,
+      var.line_group_id_map_secret_name,
     ])
   )
   project   = var.project_id
@@ -188,6 +232,25 @@ resource "google_cloud_scheduler_job" "detection" {
 
   http_target {
     uri         = "${google_cloud_run_v2_service.monitoring_mother.uri}/jobs/detect"
+    http_method = "POST"
+    oidc_token {
+      service_account_email = google_service_account.scheduler_invoker.email
+      audience              = google_cloud_run_v2_service.monitoring_mother.uri
+    }
+  }
+}
+
+resource "google_cloud_scheduler_job" "daily_summary" {
+  count       = var.enable_daily_summary ? 1 : 0
+  project     = var.project_id
+  region      = var.region
+  name        = "${local.monitoring_service}-daily-summary"
+  schedule    = var.daily_summary_schedule
+  time_zone   = var.timezone
+  description = "Daily activity summary report"
+
+  http_target {
+    uri         = "${google_cloud_run_v2_service.monitoring_mother.uri}/jobs/daily-summary"
     http_method = "POST"
     oidc_token {
       service_account_email = google_service_account.scheduler_invoker.email

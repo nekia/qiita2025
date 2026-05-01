@@ -68,9 +68,51 @@ variable "detection_schedule" {
   default = "*/30 * * * *"
 }
 
+variable "enable_daily_summary" {
+  description = "If true, schedule daily summary LINE report job."
+  type        = bool
+  default     = false
+}
+
+variable "daily_summary_schedule" {
+  description = "Cloud Scheduler cron for daily summary job."
+  type        = string
+  default     = "0 23 * * *"
+}
+
+variable "daily_summary_lookback_hours" {
+  description = "Hours to look back when building daily summary."
+  type        = number
+  default     = 48
+}
+
 variable "line_group_id" {
   type    = string
   default = ""
+}
+
+variable "line_group_id_secret_name" {
+  description = "Optional Secret Manager secret name for LINE_GROUP_ID."
+  type        = string
+  default     = ""
+}
+
+variable "line_group_id_map" {
+  description = "Comma-separated map for per-site or per-device LINE targets. Example: SITE_A:Uxxx,AA11BB22CC33:Uyyy"
+  type        = string
+  default     = ""
+}
+
+variable "line_group_id_map_secret_name" {
+  description = "Optional Secret Manager secret name for LINE_GROUP_ID_MAP."
+  type        = string
+  default     = ""
+}
+
+variable "switchbot_site_map" {
+  description = "Comma-separated map from device MAC to logical site key. Example: AA11BB22CC33:mother-home"
+  type        = string
+  default     = ""
 }
 
 variable "log_webhook_payload" {

@@ -611,7 +611,14 @@ module "monitoring_mother" {
   timezone                            = var.monitoring_mother_timezone
   learning_schedule                   = var.monitoring_mother_learning_schedule
   detection_schedule                  = var.monitoring_mother_detection_schedule
+  enable_daily_summary                = var.monitoring_mother_enable_daily_summary
+  daily_summary_schedule              = var.monitoring_mother_daily_summary_schedule
+  daily_summary_lookback_hours        = var.monitoring_mother_daily_summary_lookback_hours
   line_group_id                       = var.monitoring_mother_line_group_id
+  line_group_id_secret_name           = var.secret_name_monitoring_mother_line_group_id
+  line_group_id_map                   = var.monitoring_mother_line_group_id_map
+  line_group_id_map_secret_name       = var.secret_name_monitoring_mother_line_group_id_map
+  switchbot_site_map                  = var.monitoring_mother_switchbot_site_map
   log_webhook_payload                 = var.monitoring_mother_log_webhook_payload
   switchbot_webhook_token_secret_name = var.secret_name_switchbot_webhook_token
   switchbot_allowed_device_macs       = var.monitoring_mother_switchbot_allowed_device_macs

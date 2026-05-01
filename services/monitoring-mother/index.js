@@ -8,7 +8,6 @@ const PORT = Number(process.env.PORT || 8080);
 const FIRESTORE_COLLECTION_EVENTS = "sb_events";
 const FIRESTORE_COLLECTION_STATS = "sb_stats";
 const FIRESTORE_COLLECTION_STATE = "sb_state";
-const GLOBAL_STATE_DOC_ID = "global";
 
 const LOOKBACK_DAYS = Number(process.env.LEARNING_LOOKBACK_DAYS || 30);
 const ANOMALY_EXPECTED_THRESHOLD = Number(process.env.ANOMALY_EXPECTED_THRESHOLD || 0.7);
@@ -18,8 +17,11 @@ const SWITCHBOT_WEBHOOK_SECRET = process.env.SWITCHBOT_WEBHOOK_SECRET || "";
 const SWITCHBOT_WEBHOOK_TOKEN = process.env.SWITCHBOT_WEBHOOK_TOKEN || "";
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || "";
 const LINE_GROUP_ID = process.env.LINE_GROUP_ID || "";
+const LINE_GROUP_ID_MAP_RAW = process.env.LINE_GROUP_ID_MAP || "";
+const SWITCHBOT_SITE_MAP_RAW = process.env.SWITCHBOT_SITE_MAP || "";
 const TZ = process.env.TIMEZONE || "Asia/Tokyo";
 const LOG_WEBHOOK_PAYLOAD = process.env.LOG_WEBHOOK_PAYLOAD === "true";
+const DAILY_SUMMARY_LOOKBACK_HOURS = Number(process.env.DAILY_SUMMARY_LOOKBACK_HOURS || 48);
 const SWITCHBOT_MAX_EVENT_AGE_SECONDS = Number(process.env.SWITCHBOT_MAX_EVENT_AGE_SECONDS || 600);
 const SWITCHBOT_MAX_FUTURE_SKEW_SECONDS = Number(process.env.SWITCHBOT_MAX_FUTURE_SKEW_SECONDS || 30);
 const STORE_NOT_DETECTED_EVENTS = process.env.STORE_NOT_DETECTED_EVENTS === "true";
@@ -31,6 +33,25 @@ const ALLOWED_DEVICE_TYPES = (process.env.SWITCHBOT_ALLOWED_DEVICE_TYPES || "")
   .split(",")
   .map((v) => v.trim())
   .filter(Boolean);
+
+function parseKeyValueMap(raw) {
+  const map = {};
+  String(raw || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .forEach((entry) => {
+      const idx = entry.indexOf(":");
+      if (idx <= 0) return;
+      const key = entry.slice(0, idx).trim().toUpperCase();
+      const value = entry.slice(idx + 1).trim();
+      if (key && value) map[key] = value;
+    });
+  return map;
+}
+
+const LINE_GROUP_ID_MAP = parseKeyValueMap(LINE_GROUP_ID_MAP_RAW);
+const SWITCHBOT_SITE_MAP = parseKeyValueMap(SWITCHBOT_SITE_MAP_RAW);
 
 let firestoreClient = null;
 function firestore() {
@@ -72,6 +93,30 @@ function nowInTz() {
     dayOfWeek: weekdayMap[map.weekday] ?? 0,
     hour: Number(map.hour),
     isoLocal: `${map.year}-${map.month}-${map.day}T${map.hour}:${map.minute}:${map.second}`,
+  };
+}
+
+function getTzDateParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  return {
+    year: map.year,
+    month: map.month,
+    day: map.day,
+    hour: map.hour,
+    minute: map.minute,
+    second: map.second,
+    dateKey: `${map.year}-${map.month}-${map.day}`,
+    timeText: `${map.hour}:${map.minute}`,
   };
 }
 
@@ -205,6 +250,38 @@ function extractDeviceType(payload) {
   return payload?.deviceType || payload?.context?.deviceType || "";
 }
 
+function toDocSafeKey(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .slice(0, 120);
+}
+
+function resolveSiteKey(deviceId) {
+  const normalized = String(deviceId || "").toUpperCase();
+  const mapped = SWITCHBOT_SITE_MAP[normalized];
+  return toDocSafeKey(mapped || normalized || "unknown-site");
+}
+
+function buildStateDocId(siteKey) {
+  return `site__${toDocSafeKey(siteKey)}`;
+}
+
+function buildStatsDocId(siteKey, weekday) {
+  return `${toDocSafeKey(siteKey)}__${weekday}`;
+}
+
+function resolveLineTarget(siteKey, deviceId) {
+  const siteUpper = String(siteKey || "").toUpperCase();
+  const deviceUpper = String(deviceId || "").toUpperCase();
+  return LINE_GROUP_ID_MAP[siteUpper] || LINE_GROUP_ID_MAP[deviceUpper] || LINE_GROUP_ID || "";
+}
+
+function resolveEventSiteId(eventData) {
+  if (eventData?.site_id) return toDocSafeKey(eventData.site_id);
+  return resolveSiteKey(eventData?.device_id);
+}
+
 function buildWebhookEventSummary(payload) {
   const context = payload?.context || {};
   return {
@@ -243,8 +320,12 @@ function isAllowedEvent(payload) {
   };
 }
 
-async function callLinePush(messageText) {
-  if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_GROUP_ID) {
+async function callLinePush(messageText, targetId = LINE_GROUP_ID) {
+  return callLinePushMessages([{ type: "text", text: messageText }], targetId);
+}
+
+async function callLinePushMessages(messages, targetId = LINE_GROUP_ID) {
+  if (!LINE_CHANNEL_ACCESS_TOKEN || !targetId) {
     throw new Error("LINE settings are incomplete");
   }
 
@@ -260,8 +341,8 @@ async function callLinePush(messageText) {
         Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
       },
       body: JSON.stringify({
-        to: LINE_GROUP_ID,
-        messages: [{ type: "text", text: messageText }],
+        to: targetId,
+        messages,
       }),
     });
 
@@ -277,10 +358,92 @@ async function callLinePush(messageText) {
   }
 }
 
-async function updateStateOnDetection(lastDetectedAt) {
-  const stateRef = firestore().collection(FIRESTORE_COLLECTION_STATE).doc(GLOBAL_STATE_DOC_ID);
+function buildHourlyChartUrl(hourlyCounts, titleDateKey) {
+  const labels = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}h`);
+  const chartConfig = {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Motion detections",
+          data: hourlyCounts,
+          backgroundColor: "rgba(54, 162, 235, 0.75)",
+          borderColor: "rgba(54, 162, 235, 1)",
+          borderWidth: 1,
+        },
+      ],
+    },
+    options: {
+      plugins: {
+        title: {
+          display: true,
+          text: `Daily Motion Summary (${titleDateKey})`,
+        },
+        legend: { display: false },
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: { precision: 0 },
+        },
+      },
+    },
+  };
+  return `https://quickchart.io/chart?width=1000&height=520&format=png&c=${encodeURIComponent(JSON.stringify(chartConfig))}`;
+}
+
+function summarizeDailyActivity(dayEvents, targetDateKey, siteKey) {
+  const hourlyCounts = new Array(24).fill(0);
+  const points = [];
+
+  dayEvents.forEach((event) => {
+    if (resolveEventSiteId(event) !== siteKey) return;
+    const ts = event.timestamp?.toDate?.();
+    if (!ts) return;
+    const p = getTzDateParts(ts);
+    if (p.dateKey !== targetDateKey) return;
+    const hour = Number(p.hour);
+    hourlyCounts[hour] += 1;
+    points.push({ ts, hour, timeText: p.timeText });
+  });
+
+  points.sort((a, b) => a.ts.getTime() - b.ts.getTime());
+  const totalDetections = hourlyCounts.reduce((sum, v) => sum + v, 0);
+
+  const morning = points.find((p) => p.hour >= 4 && p.hour <= 11);
+  const nightCandidates = points.filter((p) => p.hour >= 20 || p.hour <= 3);
+  const bedtime = nightCandidates.length ? nightCandidates[nightCandidates.length - 1] : null;
+
+  return {
+    hourlyCounts,
+    totalDetections,
+    wakeupTime: morning?.timeText || "N/A",
+    bedtimeTime: bedtime?.timeText || "N/A",
+  };
+}
+
+async function listTargetSites() {
+  const stateSnap = await firestore().collection(FIRESTORE_COLLECTION_STATE).get();
+  const stateSites = stateSnap.docs
+    .map((d) => d.data()?.site_id || d.id?.replace(/^site__/, ""))
+    .filter(Boolean);
+  if (stateSites.length > 0) return Array.from(new Set(stateSites.map((s) => toDocSafeKey(s))));
+
+  const from = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+  const eventsSnap = await firestore()
+    .collection(FIRESTORE_COLLECTION_EVENTS)
+    .where("timestamp", ">=", Timestamp.fromDate(from))
+    .get();
+  const eventSites = eventsSnap.docs.map((d) => resolveEventSiteId(d.data())).filter(Boolean);
+  return Array.from(new Set(eventSites));
+}
+
+async function updateStateOnDetection(siteKey, lastDetectedAt) {
+  const stateRef = firestore().collection(FIRESTORE_COLLECTION_STATE).doc(buildStateDocId(siteKey));
   await stateRef.set(
     {
+      site_id: siteKey,
       last_detected_at: Timestamp.fromDate(lastDetectedAt),
       current_mode: "NORMAL",
     },
@@ -378,10 +541,11 @@ app.post("/webhook/switchbot", async (req, res) => {
     const eventTimestamp = parseEventTimestamp(payload);
     const eventType = extractEventType(payload);
     const deviceId = extractDeviceId(payload);
+    const siteKey = resolveSiteKey(deviceId);
     const idempotencyKey = computeIdempotencyKey(req.rawBody);
 
     const eventRef = firestore().collection(FIRESTORE_COLLECTION_EVENTS).doc(idempotencyKey);
-    const stateRef = firestore().collection(FIRESTORE_COLLECTION_STATE).doc(GLOBAL_STATE_DOC_ID);
+    const stateRef = firestore().collection(FIRESTORE_COLLECTION_STATE).doc(buildStateDocId(siteKey));
 
     const alreadyProcessed = await firestore().runTransaction(async (tx) => {
       const snap = await tx.get(eventRef);
@@ -389,12 +553,15 @@ app.post("/webhook/switchbot", async (req, res) => {
 
       tx.set(eventRef, {
         device_id: deviceId,
+        site_id: siteKey,
         timestamp: Timestamp.fromDate(eventTimestamp),
         event_type: eventType,
       });
       tx.set(
         stateRef,
         {
+          site_id: siteKey,
+          device_id: deviceId,
           last_detected_at: Timestamp.fromDate(eventTimestamp),
           current_mode: "NORMAL",
         },
@@ -463,69 +630,90 @@ app.post("/jobs/learn", async (_req, res) => {
     const dayKeys = [];
     for (let i = 0; i < LOOKBACK_DAYS; i += 1) {
       const d = new Date(from.getTime() + i * 24 * 60 * 60 * 1000);
-      dayKeys.push(`${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`);
+      dayKeys.push(getTzDateParts(d).dateKey);
     }
 
-    const dayMeta = new Map();
-    for (const key of dayKeys) {
-      const [year, month, date] = key.split("-").map(Number);
-      const d = new Date(year, month - 1, date);
-      dayMeta.set(key, { weekday: d.getDay(), activeHours: new Set() });
-    }
+    const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    const siteDayMeta = new Map(); // site -> Map(dateKey, { weekday, activeHours })
+    const ensureSiteMeta = (siteId) => {
+      if (!siteDayMeta.has(siteId)) {
+        const m = new Map();
+        for (const key of dayKeys) {
+          const [year, month, day] = key.split("-").map(Number);
+          const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+          const wkText = new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short" }).format(date);
+          m.set(key, { weekday: weekdayMap[wkText], activeHours: new Set() });
+        }
+        siteDayMeta.set(siteId, m);
+      }
+      return siteDayMeta.get(siteId);
+    };
 
     snapshot.docs.forEach((doc) => {
       const data = doc.data();
       const ts = data.timestamp?.toDate?.();
       if (!ts) return;
-      const key = `${ts.getFullYear()}-${ts.getMonth() + 1}-${ts.getDate()}`;
-      if (!dayMeta.has(key)) return;
-      dayMeta.get(key).activeHours.add(ts.getHours());
+      const siteId = resolveEventSiteId(data);
+      const dateKey = getTzDateParts(ts).dateKey;
+      const hour = Number(getTzDateParts(ts).hour);
+      const siteMeta = ensureSiteMeta(siteId);
+      if (!siteMeta.has(dateKey)) return;
+      siteMeta.get(dateKey).activeHours.add(hour);
     });
 
-    const weekdays = Array.from({ length: 7 }, () => ({ days: 0, hourHits: new Array(24).fill(0) }));
-    dayMeta.forEach((meta) => {
-      weekdays[meta.weekday].days += 1;
-      meta.activeHours.forEach((hour) => {
-        weekdays[meta.weekday].hourHits[hour] += 1;
+    const batch = firestore().batch();
+    const siteSummaries = [];
+    for (const [siteId, dayMeta] of siteDayMeta.entries()) {
+      const weekdays = Array.from({ length: 7 }, () => ({ days: 0, hourHits: new Array(24).fill(0) }));
+      dayMeta.forEach((meta) => {
+        weekdays[meta.weekday].days += 1;
+        meta.activeHours.forEach((hour) => {
+          weekdays[meta.weekday].hourHits[hour] += 1;
+        });
       });
-    });
 
-    const weekdaySummary = weekdays.map((w, idx) => ({
-      weekday: idx,
-      total_days: w.days,
-      active_hours_count: w.hourHits.filter((h) => h > 0).length,
-      total_hour_hits: w.hourHits.reduce((sum, h) => sum + h, 0),
-    }));
+      for (let weekday = 0; weekday < 7; weekday += 1) {
+        const totalDays = weekdays[weekday].days;
+        const hourlyProbability = weekdays[weekday].hourHits.map((hits) => {
+          if (totalDays === 0) return 0;
+          return Number((hits / totalDays).toFixed(4));
+        });
+
+        const ref = firestore().collection(FIRESTORE_COLLECTION_STATS).doc(buildStatsDocId(siteId, weekday));
+        batch.set(
+          ref,
+          {
+            site_id: siteId,
+            day_of_week: weekday,
+            hourly_probability: hourlyProbability,
+          },
+          { merge: true }
+        );
+        siteSummaries.push({
+          site_id: siteId,
+          weekday,
+          total_days: totalDays,
+          active_hours_count: weekdays[weekday].hourHits.filter((h) => h > 0).length,
+          total_hour_hits: weekdays[weekday].hourHits.reduce((sum, h) => sum + h, 0),
+        });
+      }
+    }
+
     console.log(
       JSON.stringify({
         severity: "INFO",
-        message: "learning job weekday summary",
-        weekday_summary: weekdaySummary,
+        message: "learning job site summary",
+        site_summary_count: siteSummaries.length,
+        site_summaries: siteSummaries,
       })
     );
 
-    const batch = firestore().batch();
-    for (let weekday = 0; weekday < 7; weekday += 1) {
-      const totalDays = weekdays[weekday].days;
-      const hourlyProbability = weekdays[weekday].hourHits.map((hits) => {
-        if (totalDays === 0) return 0;
-        return Number((hits / totalDays).toFixed(4));
-      });
-
-      const ref = firestore().collection(FIRESTORE_COLLECTION_STATS).doc(String(weekday));
-      batch.set(
-        ref,
-        {
-          hourly_probability: hourlyProbability,
-        },
-        { merge: true }
-      );
-    }
     await batch.commit();
     return res.status(200).json({
       status: "ok",
       scanned_events: snapshot.size,
-      weekday_summary: weekdaySummary,
+      site_summary_count: siteSummaries.length,
+      site_summaries: siteSummaries,
     });
   } catch (error) {
     console.error(
@@ -542,45 +730,59 @@ app.post("/jobs/learn", async (_req, res) => {
 app.post("/jobs/detect", async (_req, res) => {
   try {
     const { dayOfWeek, hour, isoLocal } = nowInTz();
-    const stateRef = firestore().collection(FIRESTORE_COLLECTION_STATE).doc(GLOBAL_STATE_DOC_ID);
-    const statsRef = firestore().collection(FIRESTORE_COLLECTION_STATS).doc(String(dayOfWeek));
+    const siteKeys = await listTargetSites();
+    const results = [];
 
-    const [stateSnap, statsSnap] = await Promise.all([stateRef.get(), statsRef.get()]);
-    const state = stateSnap.exists ? stateSnap.data() : {};
-    const stats = statsSnap.exists ? statsSnap.data() : {};
+    for (const siteKey of siteKeys) {
+      const stateRef = firestore().collection(FIRESTORE_COLLECTION_STATE).doc(buildStateDocId(siteKey));
+      const statsRef = firestore().collection(FIRESTORE_COLLECTION_STATS).doc(buildStatsDocId(siteKey, dayOfWeek));
+      const [stateSnap, statsSnap] = await Promise.all([stateRef.get(), statsRef.get()]);
+      const state = stateSnap.exists ? stateSnap.data() : {};
+      const stats = statsSnap.exists ? statsSnap.data() : {};
 
-    const expected = Number(stats?.hourly_probability?.[hour] || 0);
-    const lastDetectedAt = state?.last_detected_at?.toDate?.() || null;
-    const inactiveMs = lastDetectedAt ? Date.now() - lastDetectedAt.getTime() : Number.MAX_SAFE_INTEGER;
-    const isInactiveLongEnough = inactiveMs >= ANOMALY_INACTIVE_HOURS * 60 * 60 * 1000;
-    const shouldAlert = expected >= ANOMALY_EXPECTED_THRESHOLD && isInactiveLongEnough;
-    const currentMode = state?.current_mode || "NORMAL";
+      const expected = Number(stats?.hourly_probability?.[hour] || 0);
+      const lastDetectedAt = state?.last_detected_at?.toDate?.() || null;
+      const inactiveMs = lastDetectedAt ? Date.now() - lastDetectedAt.getTime() : Number.MAX_SAFE_INTEGER;
+      const isInactiveLongEnough = inactiveMs >= ANOMALY_INACTIVE_HOURS * 60 * 60 * 1000;
+      const shouldAlert = expected >= ANOMALY_EXPECTED_THRESHOLD && isInactiveLongEnough;
+      const currentMode = state?.current_mode || "NORMAL";
+      const lineTarget = resolveLineTarget(siteKey, state?.device_id);
 
-    if (shouldAlert && currentMode !== "ALERT") {
-      const inactiveHours = (inactiveMs / (60 * 60 * 1000)).toFixed(1);
-      await callLinePush(
-        `見守りアラート: 期待活動時間帯(${hour}時台, p=${expected})に ${inactiveHours} 時間検知がありません。(${isoLocal} ${TZ})`
-      );
-      await stateRef.set(
-        {
-          current_mode: "ALERT",
-        },
-        { merge: true }
-      );
-    } else if (!shouldAlert && currentMode !== "NORMAL") {
-      await stateRef.set(
-        {
-          current_mode: "NORMAL",
-        },
-        { merge: true }
-      );
+      if (shouldAlert && currentMode !== "ALERT") {
+        const inactiveHours = (inactiveMs / (60 * 60 * 1000)).toFixed(1);
+        await callLinePush(
+          `見守りアラート(${siteKey}): 期待活動時間帯(${hour}時台, p=${expected})に ${inactiveHours} 時間検知がありません。(${isoLocal} ${TZ})`,
+          lineTarget
+        );
+        await stateRef.set(
+          {
+            site_id: siteKey,
+            current_mode: "ALERT",
+          },
+          { merge: true }
+        );
+      } else if (!shouldAlert && currentMode !== "NORMAL") {
+        await stateRef.set(
+          {
+            site_id: siteKey,
+            current_mode: "NORMAL",
+          },
+          { merge: true }
+        );
+      }
+
+      results.push({
+        site_id: siteKey,
+        should_alert: shouldAlert,
+        expected,
+        current_mode_before: currentMode,
+      });
     }
 
     return res.status(200).json({
       status: "ok",
-      should_alert: shouldAlert,
-      expected,
-      current_mode_before: currentMode,
+      sites_checked: siteKeys.length,
+      results,
     });
   } catch (error) {
     console.error(
@@ -594,10 +796,85 @@ app.post("/jobs/detect", async (_req, res) => {
   }
 });
 
+app.post("/jobs/daily-summary", async (_req, res) => {
+  try {
+    const now = new Date();
+    const targetDateKey = getTzDateParts(now).dateKey;
+    const from = new Date(now.getTime() - DAILY_SUMMARY_LOOKBACK_HOURS * 60 * 60 * 1000);
+
+    const snapshot = await firestore()
+      .collection(FIRESTORE_COLLECTION_EVENTS)
+      .where("timestamp", ">=", Timestamp.fromDate(from))
+      .get();
+
+    const events = snapshot.docs.map((d) => d.data());
+    const siteKeys = Array.from(new Set(events.map((e) => resolveEventSiteId(e)).filter(Boolean)));
+    const sent = [];
+
+    for (const siteKey of siteKeys) {
+      const daySummary = summarizeDailyActivity(events, targetDateKey, siteKey);
+      const chartUrl = buildHourlyChartUrl(daySummary.hourlyCounts, `${targetDateKey} ${siteKey}`);
+      const text = [
+        `日次見守りサマリ (${siteKey})`,
+        `日付: ${targetDateKey} (${TZ})`,
+        `検知件数: ${daySummary.totalDetections}`,
+        `起床推定: ${daySummary.wakeupTime}`,
+        `就寝推定: ${daySummary.bedtimeTime}`,
+      ].join("\n");
+
+      const lineTarget = resolveLineTarget(siteKey);
+      await callLinePushMessages(
+        [
+          { type: "text", text },
+          {
+            type: "image",
+            originalContentUrl: chartUrl,
+            previewImageUrl: chartUrl,
+          },
+        ],
+        lineTarget
+      );
+      sent.push({
+        site_id: siteKey,
+        detections: daySummary.totalDetections,
+        wakeup_time: daySummary.wakeupTime,
+        bedtime_time: daySummary.bedtimeTime,
+        chart_url: chartUrl,
+      });
+    }
+
+    console.log(
+      JSON.stringify({
+        severity: "INFO",
+        message: "daily summary sent",
+        target_date: targetDateKey,
+        sent_count: sent.length,
+      })
+    );
+
+    return res.status(200).json({
+      status: "ok",
+      target_date: targetDateKey,
+      sent_count: sent.length,
+      sent,
+    });
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        severity: "ERROR",
+        message: "daily summary job failed",
+        error: error.message,
+      })
+    );
+    return res.status(500).json({ error: "daily summary failed" });
+  }
+});
+
 // Manual endpoint for debugging state transitions in lower environments.
 app.post("/jobs/mark-detected", async (_req, res) => {
   try {
-    await updateStateOnDetection(new Date());
+    const siteKey = toDocSafeKey(_req.query?.site_id || "manual");
+    await updateStateOnDetection(siteKey, new Date());
     return res.status(200).json({ status: "ok" });
   } catch (error) {
     return res.status(500).json({ error: error.message });
