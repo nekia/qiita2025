@@ -385,6 +385,18 @@ variable "secret_name_monitoring_mother_line_group_id_map" {
   default     = ""
 }
 
+variable "monitoring_mother_line_channel_access_token_map" {
+  description = "Comma-separated map for per-site or per-device LINE bot channel access token."
+  type        = string
+  default     = ""
+}
+
+variable "secret_name_monitoring_mother_line_channel_access_token_map" {
+  description = "Optional Secret Manager secret name for monitoring-mother LINE_CHANNEL_ACCESS_TOKEN_MAP."
+  type        = string
+  default     = ""
+}
+
 variable "monitoring_mother_switchbot_site_map" {
   description = "Comma-separated map from SwitchBot device MAC to logical site key."
   type        = string
@@ -473,6 +485,18 @@ variable "monitoring_mother_inactive_hours" {
   description = "Inactive duration threshold (hours) for anomaly alerting."
   type        = number
   default     = 2
+}
+
+variable "monitoring_mother_alert_expected_threshold" {
+  description = "Expected activity probability threshold for Alert escalation."
+  type        = number
+  default     = 0.85
+}
+
+variable "monitoring_mother_alert_inactive_hours" {
+  description = "Inactive duration threshold (hours) for Alert escalation."
+  type        = number
+  default     = 4
 }
 
 variable "secret_name_switchbot_webhook_secret" {

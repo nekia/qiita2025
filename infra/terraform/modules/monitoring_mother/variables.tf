@@ -109,6 +109,18 @@ variable "line_group_id_map_secret_name" {
   default     = ""
 }
 
+variable "line_channel_access_token_map" {
+  description = "Comma-separated map for per-site or per-device LINE bot channel access token. Example: SITE_A:tokenA,AA11BB22CC33:tokenB"
+  type        = string
+  default     = ""
+}
+
+variable "line_channel_access_token_map_secret_name" {
+  description = "Optional Secret Manager secret name for LINE_CHANNEL_ACCESS_TOKEN_MAP."
+  type        = string
+  default     = ""
+}
+
 variable "switchbot_site_map" {
   description = "Comma-separated map from device MAC to logical site key. Example: AA11BB22CC33:mother-home"
   type        = string
@@ -158,6 +170,16 @@ variable "anomaly_expected_threshold" {
 variable "anomaly_inactive_hours" {
   type    = number
   default = 2
+}
+
+variable "alert_expected_threshold" {
+  type    = number
+  default = 0.85
+}
+
+variable "alert_inactive_hours" {
+  type    = number
+  default = 4
 }
 
 variable "switchbot_secret_name" {

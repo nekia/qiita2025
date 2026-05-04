@@ -618,6 +618,8 @@ module "monitoring_mother" {
   line_group_id_secret_name           = var.secret_name_monitoring_mother_line_group_id
   line_group_id_map                   = var.monitoring_mother_line_group_id_map
   line_group_id_map_secret_name       = var.secret_name_monitoring_mother_line_group_id_map
+  line_channel_access_token_map       = var.monitoring_mother_line_channel_access_token_map
+  line_channel_access_token_map_secret_name = var.secret_name_monitoring_mother_line_channel_access_token_map
   switchbot_site_map                  = var.monitoring_mother_switchbot_site_map
   log_webhook_payload                 = var.monitoring_mother_log_webhook_payload
   enable_test_endpoints               = var.monitoring_mother_enable_test_endpoints
@@ -627,6 +629,8 @@ module "monitoring_mother" {
   learning_lookback_days              = var.monitoring_mother_learning_lookback_days
   anomaly_expected_threshold          = var.monitoring_mother_expected_threshold
   anomaly_inactive_hours              = var.monitoring_mother_inactive_hours
+  alert_expected_threshold            = var.monitoring_mother_alert_expected_threshold
+  alert_inactive_hours                = var.monitoring_mother_alert_inactive_hours
 
   switchbot_secret_name                 = var.secret_name_switchbot_webhook_secret
   line_channel_access_token_secret_name = var.secret_name_line_channel_access_token

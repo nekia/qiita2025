@@ -116,10 +116,14 @@ Set these variables in `envs/*.tfvars`:
 - `monitoring_mother_daily_summary_lookback_hours` (default `48`)
 - `monitoring_mother_switchbot_site_map` (device MAC -> logical site key)
 - `monitoring_mother_line_group_id_map` (site key or device MAC -> LINE target ID)
+- `monitoring_mother_line_channel_access_token_map` (site key or device MAC -> LINE bot token)
 - `secret_name_monitoring_mother_line_group_id` (optional Secret Manager key for `LINE_GROUP_ID`)
 - `secret_name_monitoring_mother_line_group_id_map` (optional Secret Manager key for `LINE_GROUP_ID_MAP`)
-- `monitoring_mother_expected_threshold` (default `0.7`)
-- `monitoring_mother_inactive_hours` (default `2`)
+- `secret_name_monitoring_mother_line_channel_access_token_map` (optional Secret Manager key for `LINE_CHANNEL_ACCESS_TOKEN_MAP`)
+- `monitoring_mother_expected_threshold` (Warning用, default `0.7`)
+- `monitoring_mother_inactive_hours` (Warning用, default `2`)
+- `monitoring_mother_alert_expected_threshold` (Alert用, default `0.85`)
+- `monitoring_mother_alert_inactive_hours` (Alert用, default `4`)
 - `monitoring_mother_log_webhook_payload` (default `false`, enable only for short-term debugging)
 - `monitoring_mother_enable_test_endpoints` (default `false`, enable only in development)
 
@@ -130,6 +134,7 @@ Secrets (Secret Manager) used by this service:
 - `switchbot_webhook_token` (`secret_name_switchbot_webhook_token`, optional fallback auth token)
 - `monitoring_mother_line_group_id` (`secret_name_monitoring_mother_line_group_id`, optional)
 - `monitoring_mother_line_group_id_map` (`secret_name_monitoring_mother_line_group_id_map`, optional)
+- `monitoring_mother_line_channel_access_token_map` (`secret_name_monitoring_mother_line_channel_access_token_map`, optional)
 
 Recommended logging posture:
 
@@ -148,6 +153,21 @@ LINE destination variable usage:
   1) `LINE_GROUP_ID_MAP[siteKey]`
   2) `LINE_GROUP_ID_MAP[deviceMac]`
   3) fallback `LINE_GROUP_ID`
+
+LINE bot token variable usage:
+
+- default token comes from `secret_name_line_channel_access_token`
+- `monitoring_mother_line_channel_access_token_map` overrides token by site key or device MAC
+- resolution order in runtime:
+  1) `LINE_CHANNEL_ACCESS_TOKEN_MAP[siteKey]`
+  2) `LINE_CHANNEL_ACCESS_TOKEN_MAP[deviceMac]`
+  3) fallback `LINE_CHANNEL_ACCESS_TOKEN`
+
+Anomaly levels:
+
+- `Warning`: expected >= `monitoring_mother_expected_threshold` and inactivity >= `monitoring_mother_inactive_hours`
+- `Alert`: expected >= `monitoring_mother_alert_expected_threshold` and inactivity >= `monitoring_mother_alert_inactive_hours`
+- Alert message includes prompt to verify sensor health (battery/placement/connectivity)
 
 If secret names are configured (`secret_name_monitoring_mother_line_group_id*`),
 those secret values are used instead of plain tfvars values.

@@ -94,6 +94,25 @@ resource "google_cloud_run_v2_service" "monitoring_mother" {
           value = env.value
         }
       }
+      dynamic "env" {
+        for_each = var.line_channel_access_token_map_secret_name != "" ? [var.line_channel_access_token_map_secret_name] : []
+        content {
+          name = "LINE_CHANNEL_ACCESS_TOKEN_MAP"
+          value_source {
+            secret_key_ref {
+              secret  = env.value
+              version = "latest"
+            }
+          }
+        }
+      }
+      dynamic "env" {
+        for_each = var.line_channel_access_token_map_secret_name == "" ? [var.line_channel_access_token_map] : []
+        content {
+          name  = "LINE_CHANNEL_ACCESS_TOKEN_MAP"
+          value = env.value
+        }
+      }
       env {
         name  = "SWITCHBOT_SITE_MAP"
         value = var.switchbot_site_map
@@ -135,12 +154,20 @@ resource "google_cloud_run_v2_service" "monitoring_mother" {
         value = tostring(var.learning_lookback_days)
       }
       env {
-        name  = "ANOMALY_EXPECTED_THRESHOLD"
+        name  = "WARNING_EXPECTED_THRESHOLD"
         value = tostring(var.anomaly_expected_threshold)
       }
       env {
-        name  = "ANOMALY_INACTIVE_HOURS"
+        name  = "WARNING_INACTIVE_HOURS"
         value = tostring(var.anomaly_inactive_hours)
+      }
+      env {
+        name  = "ALERT_EXPECTED_THRESHOLD"
+        value = tostring(var.alert_expected_threshold)
+      }
+      env {
+        name  = "ALERT_INACTIVE_HOURS"
+        value = tostring(var.alert_inactive_hours)
       }
       env {
         name = "SWITCHBOT_WEBHOOK_SECRET"
@@ -200,6 +227,7 @@ resource "google_secret_manager_secret_iam_member" "runtime_secret_accessor" {
       var.switchbot_webhook_token_secret_name,
       var.line_group_id_secret_name,
       var.line_group_id_map_secret_name,
+      var.line_channel_access_token_map_secret_name,
     ])
   )
   project   = var.project_id

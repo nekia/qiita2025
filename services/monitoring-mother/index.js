@@ -10,12 +10,17 @@ const FIRESTORE_COLLECTION_STATS = "sb_stats";
 const FIRESTORE_COLLECTION_STATE = "sb_state";
 
 const LOOKBACK_DAYS = Number(process.env.LEARNING_LOOKBACK_DAYS || 30);
-const ANOMALY_EXPECTED_THRESHOLD = Number(process.env.ANOMALY_EXPECTED_THRESHOLD || 0.7);
-const ANOMALY_INACTIVE_HOURS = Number(process.env.ANOMALY_INACTIVE_HOURS || 2);
+const WARNING_EXPECTED_THRESHOLD = Number(process.env.WARNING_EXPECTED_THRESHOLD || process.env.ANOMALY_EXPECTED_THRESHOLD || 0.7);
+const WARNING_INACTIVE_HOURS = Number(process.env.WARNING_INACTIVE_HOURS || process.env.ANOMALY_INACTIVE_HOURS || 2);
+const ALERT_EXPECTED_THRESHOLD = Number(
+  process.env.ALERT_EXPECTED_THRESHOLD || Math.max(WARNING_EXPECTED_THRESHOLD, 0.85)
+);
+const ALERT_INACTIVE_HOURS = Number(process.env.ALERT_INACTIVE_HOURS || Math.max(WARNING_INACTIVE_HOURS + 2, 4));
 
 const SWITCHBOT_WEBHOOK_SECRET = process.env.SWITCHBOT_WEBHOOK_SECRET || "";
 const SWITCHBOT_WEBHOOK_TOKEN = process.env.SWITCHBOT_WEBHOOK_TOKEN || "";
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || "";
+const LINE_CHANNEL_ACCESS_TOKEN_MAP_RAW = process.env.LINE_CHANNEL_ACCESS_TOKEN_MAP || "";
 const LINE_GROUP_ID = process.env.LINE_GROUP_ID || "";
 const LINE_GROUP_ID_MAP_RAW = process.env.LINE_GROUP_ID_MAP || "";
 const SWITCHBOT_SITE_MAP_RAW = process.env.SWITCHBOT_SITE_MAP || "";
@@ -53,6 +58,7 @@ function parseKeyValueMap(raw) {
 }
 
 const LINE_GROUP_ID_MAP = parseKeyValueMap(LINE_GROUP_ID_MAP_RAW);
+const LINE_CHANNEL_ACCESS_TOKEN_MAP = parseKeyValueMap(LINE_CHANNEL_ACCESS_TOKEN_MAP_RAW);
 const SWITCHBOT_SITE_MAP = parseKeyValueMap(SWITCHBOT_SITE_MAP_RAW);
 const SITE_LABEL_MAP = parseKeyValueMap(SITE_LABEL_MAP_RAW);
 
@@ -280,6 +286,23 @@ function resolveLineTarget(siteKey, deviceId) {
   return LINE_GROUP_ID_MAP[siteUpper] || LINE_GROUP_ID_MAP[deviceUpper] || LINE_GROUP_ID || "";
 }
 
+function resolveLineAccessToken(siteKey, deviceId) {
+  const siteUpper = String(siteKey || "").toUpperCase();
+  const deviceUpper = String(deviceId || "").toUpperCase();
+  return (
+    LINE_CHANNEL_ACCESS_TOKEN_MAP[siteUpper] ||
+    LINE_CHANNEL_ACCESS_TOKEN_MAP[deviceUpper] ||
+    LINE_CHANNEL_ACCESS_TOKEN
+  );
+}
+
+function resolveLineConfig(siteKey, deviceId) {
+  return {
+    targetId: resolveLineTarget(siteKey, deviceId),
+    accessToken: resolveLineAccessToken(siteKey, deviceId),
+  };
+}
+
 function resolveEventSiteId(eventData) {
   if (eventData?.site_id) return toDocSafeKey(eventData.site_id);
   return resolveSiteKey(eventData?.device_id);
@@ -334,12 +357,14 @@ function isAllowedEvent(payload) {
   };
 }
 
-async function callLinePush(messageText, targetId = LINE_GROUP_ID) {
-  return callLinePushMessages([{ type: "text", text: messageText }], targetId);
+async function callLinePush(messageText, options = {}) {
+  return callLinePushMessages([{ type: "text", text: messageText }], options);
 }
 
-async function callLinePushMessages(messages, targetId = LINE_GROUP_ID) {
-  if (!LINE_CHANNEL_ACCESS_TOKEN || !targetId) {
+async function callLinePushMessages(messages, options = {}) {
+  const targetId = options.targetId || LINE_GROUP_ID;
+  const accessToken = options.accessToken || LINE_CHANNEL_ACCESS_TOKEN;
+  if (!accessToken || !targetId) {
     throw new Error("LINE settings are incomplete");
   }
 
@@ -352,7 +377,7 @@ async function callLinePushMessages(messages, targetId = LINE_GROUP_ID) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
+        Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({
         to: targetId,
@@ -829,27 +854,56 @@ app.post("/jobs/detect", async (_req, res) => {
       const expected = Number(stats?.hourly_probability?.[hour] || 0);
       const lastDetectedAt = state?.last_detected_at?.toDate?.() || null;
       const inactiveMs = lastDetectedAt ? Date.now() - lastDetectedAt.getTime() : Number.MAX_SAFE_INTEGER;
-      const isInactiveLongEnough = inactiveMs >= ANOMALY_INACTIVE_HOURS * 60 * 60 * 1000;
-      const shouldAlert = expected >= ANOMALY_EXPECTED_THRESHOLD && isInactiveLongEnough;
+      const inactiveHours = inactiveMs / (60 * 60 * 1000);
+      const shouldWarning =
+        expected >= WARNING_EXPECTED_THRESHOLD && inactiveHours >= WARNING_INACTIVE_HOURS;
+      const shouldAlert = expected >= ALERT_EXPECTED_THRESHOLD && inactiveHours >= ALERT_INACTIVE_HOURS;
       const currentMode = state?.current_mode || "NORMAL";
-      const lineTarget = resolveLineTarget(siteKey, state?.device_id);
+      const lineConfig = resolveLineConfig(siteKey, state?.device_id);
+      const siteLabel = resolveSiteLabel(siteKey);
+      const lastDetectedText = formatLocalDateTimeNoTz(lastDetectedAt);
 
-      if (shouldAlert && currentMode !== "ALERT") {
-        const inactiveHours = (inactiveMs / (60 * 60 * 1000)).toFixed(1);
-        const siteLabel = resolveSiteLabel(siteKey);
-        const lastDetectedText = formatLocalDateTimeNoTz(lastDetectedAt);
-        await callLinePush(
-          `${siteLabel}：${lastDetectedText}から${inactiveHours}時間以上動きが検知されていません`,
-          lineTarget
-        );
-        await stateRef.set(
-          {
-            site_id: siteKey,
-            current_mode: "ALERT",
-          },
-          { merge: true }
-        );
-      } else if (!shouldAlert && currentMode !== "NORMAL") {
+      if (shouldAlert) {
+        if (currentMode !== "ALERT") {
+          await callLinePush(
+            `🚨 見守りAlert（${siteLabel}）\n${lastDetectedText}から${inactiveHours.toFixed(
+              1
+            )}時間以上動きが検知されていません。\nすぐに電話などで安否確認してください。\nあわせて、センサー（電池残量・設置位置・通信）が正常動作しているかも確認してください。`,
+            lineConfig
+          );
+          await stateRef.set(
+            {
+              site_id: siteKey,
+              current_mode: "ALERT",
+            },
+            { merge: true }
+          );
+        }
+      } else if (shouldWarning) {
+        if (currentMode === "NORMAL") {
+          await callLinePush(
+            `⚠️ 見守りWarning（${siteLabel}）\n${lastDetectedText}から${inactiveHours.toFixed(
+              1
+            )}時間以上動きが検知されていません。\n注意が必要です。状況をご確認ください。`,
+            lineConfig
+          );
+          await stateRef.set(
+            {
+              site_id: siteKey,
+              current_mode: "WARNING",
+            },
+            { merge: true }
+          );
+        } else if (currentMode === "ALERT") {
+          await stateRef.set(
+            {
+              site_id: siteKey,
+              current_mode: "WARNING",
+            },
+            { merge: true }
+          );
+        }
+      } else if (currentMode !== "NORMAL") {
         await stateRef.set(
           {
             site_id: siteKey,
@@ -861,8 +915,10 @@ app.post("/jobs/detect", async (_req, res) => {
 
       results.push({
         site_id: siteKey,
+        should_warning: shouldWarning,
         should_alert: shouldAlert,
         expected,
+        inactive_hours: Number(inactiveHours.toFixed(2)),
         current_mode_before: currentMode,
       });
     }
@@ -917,7 +973,7 @@ app.post("/jobs/daily-summary", async (_req, res) => {
         `就寝推定: ${daySummary.bedtimeTime}`,
       ].join("\n");
 
-      const lineTarget = resolveLineTarget(siteKey);
+      const lineConfig = resolveLineConfig(siteKey);
       await callLinePushMessages(
         [
           { type: "text", text },
@@ -927,7 +983,7 @@ app.post("/jobs/daily-summary", async (_req, res) => {
             previewImageUrl: chartUrl,
           },
         ],
-        lineTarget
+        lineConfig
       );
       sent.push({
         site_id: siteKey,
@@ -992,7 +1048,7 @@ app.post("/test/seed-anomaly", async (req, res) => {
     const expected = Number.isFinite(Number(req.body?.expected)) ? Number(req.body.expected) : 1;
     const inactiveHours = Number.isFinite(Number(req.body?.inactive_hours))
       ? Number(req.body.inactive_hours)
-      : ANOMALY_INACTIVE_HOURS + 1;
+      : WARNING_INACTIVE_HOURS + 1;
 
     const statsRef = firestore().collection(FIRESTORE_COLLECTION_STATS).doc(buildStatsDocId(siteId, weekday));
     const stateRef = firestore().collection(FIRESTORE_COLLECTION_STATE).doc(buildStateDocId(siteId));
