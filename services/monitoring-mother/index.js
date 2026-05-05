@@ -313,6 +313,12 @@ function resolveSiteLabel(siteKey) {
   return SITE_LABEL_MAP[key] || siteKey;
 }
 
+function maskLineTarget(targetId) {
+  const value = String(targetId || "");
+  if (value.length <= 6) return value || "(empty)";
+  return `${value.slice(0, 3)}...${value.slice(-3)}`;
+}
+
 function formatLocalDateTimeNoTz(date) {
   if (!date) return "不明";
   const p = getTzDateParts(date);
@@ -364,6 +370,7 @@ async function callLinePush(messageText, options = {}) {
 async function callLinePushMessages(messages, options = {}) {
   const targetId = options.targetId || LINE_GROUP_ID;
   const accessToken = options.accessToken || LINE_CHANNEL_ACCESS_TOKEN;
+  const debugContext = options.debugContext || "";
   if (!accessToken || !targetId) {
     throw new Error("LINE settings are incomplete");
   }
@@ -388,7 +395,11 @@ async function callLinePushMessages(messages, options = {}) {
     if (response.ok) return;
     if (response.status !== 429 || attempt >= maxAttempts) {
       const body = await response.text();
-      throw new Error(`LINE push failed: ${response.status} ${body}`);
+      const lineRequestId = response.headers.get("x-line-request-id") || "";
+      const contextSuffix = debugContext ? ` context=${debugContext}` : "";
+      throw new Error(
+        `LINE push failed: ${response.status} ${body} line_request_id=${lineRequestId}${contextSuffix}`
+      );
     }
 
     const retryAfterSec = Number(response.headers.get("retry-after") || "1");
@@ -954,11 +965,14 @@ app.post("/jobs/daily-summary", async (_req, res) => {
     const events = snapshot.docs.map((d) => d.data());
     const siteKeys = Array.from(new Set(events.map((e) => resolveEventSiteId(e)).filter(Boolean)));
     const sent = [];
+    const failed = [];
 
     for (const siteKey of siteKeys) {
       const daySummary = summarizeDailyActivity(events, targetDateKey, siteKey);
       const prevDateKey = getPreviousDateKeyFromTzDateKey(targetDateKey);
       const prevDaySummary = summarizeDailyActivity(events, prevDateKey, siteKey);
+      const siteEvents = events.filter((e) => resolveEventSiteId(e) === siteKey);
+      const representativeDeviceId = siteEvents.find((e) => e?.device_id)?.device_id || "";
       const chartUrl = await buildHourlyChartUrl(
         daySummary.hourlyCounts,
         prevDaySummary.hourlyCounts,
@@ -973,25 +987,52 @@ app.post("/jobs/daily-summary", async (_req, res) => {
         `就寝推定: ${daySummary.bedtimeTime}`,
       ].join("\n");
 
-      const lineConfig = resolveLineConfig(siteKey);
-      await callLinePushMessages(
-        [
-          { type: "text", text },
+      const lineConfig = resolveLineConfig(siteKey, representativeDeviceId);
+      const debugContext = `daily-summary site=${siteKey} device=${representativeDeviceId || "unknown"} target=${maskLineTarget(
+        lineConfig.targetId
+      )} chart_url_length=${String(chartUrl || "").length}`;
+
+      try {
+        await callLinePushMessages(
+          [
+            { type: "text", text },
+            {
+              type: "image",
+              originalContentUrl: chartUrl,
+              previewImageUrl: chartUrl,
+            },
+          ],
           {
-            type: "image",
-            originalContentUrl: chartUrl,
-            previewImageUrl: chartUrl,
-          },
-        ],
-        lineConfig
-      );
-      sent.push({
-        site_id: siteKey,
-        detections: daySummary.totalDetections,
-        wakeup_time: daySummary.wakeupTime,
-        bedtime_time: daySummary.bedtimeTime,
-        chart_url: chartUrl,
-      });
+            ...lineConfig,
+            debugContext,
+          }
+        );
+        sent.push({
+          site_id: siteKey,
+          detections: daySummary.totalDetections,
+          wakeup_time: daySummary.wakeupTime,
+          bedtime_time: daySummary.bedtimeTime,
+          chart_url: chartUrl,
+        });
+      } catch (siteError) {
+        failed.push({
+          site_id: siteKey,
+          error: siteError.message,
+          device_id: representativeDeviceId || null,
+        });
+        console.error(
+          JSON.stringify({
+            severity: "ERROR",
+            message: "daily summary site send failed",
+            site_id: siteKey,
+            device_id: representativeDeviceId || null,
+            target_id_masked: maskLineTarget(lineConfig.targetId),
+            has_access_token: Boolean(lineConfig.accessToken),
+            chart_url_length: String(chartUrl || "").length,
+            error: siteError.message,
+          })
+        );
+      }
     }
 
     console.log(
@@ -1000,6 +1041,7 @@ app.post("/jobs/daily-summary", async (_req, res) => {
         message: "daily summary sent",
         target_date: targetDateKey,
         sent_count: sent.length,
+        failed_count: failed.length,
       })
     );
 
@@ -1007,7 +1049,9 @@ app.post("/jobs/daily-summary", async (_req, res) => {
       status: "ok",
       target_date: targetDateKey,
       sent_count: sent.length,
+      failed_count: failed.length,
       sent,
+      failed,
     });
   } catch (error) {
     console.error(
