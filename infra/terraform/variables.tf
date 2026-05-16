@@ -226,7 +226,7 @@ variable "kiosk_gateway_max_instances" {
 variable "kiosk_gateway_max_instance_request_concurrency" {
   description = "Maximum concurrent requests per kiosk-gateway instance."
   type        = number
-  default     = 40
+  default     = 1
 }
 
 variable "cloud_run_deletion_protection" {
