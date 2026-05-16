@@ -6,8 +6,9 @@ set -e
 source .env
 
 # ===== 環境変数設定 =====
-# Cloud Run URLs
-export TARGET_BASE="${TARGET_BASE:-https://kiosk-gateway-h3bva5byfq-an.a.run.app}"
+# Cloud Run URL. Set this explicitly in .env to avoid accidentally polling
+# another environment's kiosk-gateway.
+export TARGET_BASE="${TARGET_BASE:-}"
 
 # サービスアカウントキーのパス（ラズパイ上のローカルファイルシステム）
 export KIOSK_SA_KEY_PATH="${KIOSK_SA_KEY_PATH:-/opt/kiosk/creds/kiosk-tester.json}"
@@ -24,6 +25,11 @@ echo "Starting local-proxy..."
 echo "  TARGET_BASE: $TARGET_BASE"
 echo "  KIOSK_SA_KEY_PATH: $KIOSK_SA_KEY_PATH"
 echo "  PORT: $PORT"
+
+if [ -z "$TARGET_BASE" ]; then
+  echo "ERROR: TARGET_BASE is not set. Add export TARGET_BASE=<kiosk-gateway URL> to .env"
+  exit 1
+fi
 
 # キーファイル存在確認
 if [ ! -f "$KIOSK_SA_KEY_PATH" ]; then

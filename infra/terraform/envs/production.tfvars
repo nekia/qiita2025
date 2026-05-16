@@ -27,7 +27,7 @@ kiosk_gateway_cpu                              = "0.08"
 kiosk_gateway_memory                           = "256Mi"
 kiosk_gateway_timeout_seconds                  = 60
 kiosk_gateway_allow_unauthenticated            = false
-kiosk_gateway_min_instances                    = 1
+kiosk_gateway_min_instances                    = 0
 kiosk_gateway_max_instances                    = 20
 kiosk_gateway_max_instance_request_concurrency = 1
 

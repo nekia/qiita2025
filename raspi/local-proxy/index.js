@@ -477,6 +477,7 @@ app.get("/api/events", async (req, res) => {
     BEARER;
   if (kioskBearer) headers.Authorization = `Bearer ${kioskBearer}`;
 
+  let clientAborted = false;
   try {
     const upstreamBody = await new Promise((resolve, reject) => {
       const upstreamReq = client.request(
@@ -500,14 +501,19 @@ app.get("/api/events", async (req, res) => {
         }
       );
       upstreamReq.on("error", reject);
-      req.on("aborted", () => upstreamReq.destroy());
+      req.on("aborted", () => {
+        clientAborted = true;
+        upstreamReq.destroy();
+      });
       upstreamReq.end();
     });
 
+    let eventCount = null;
     if (upstreamBody.statusCode >= 200 && upstreamBody.statusCode < 300) {
       try {
         const payload = JSON.parse(upstreamBody.body);
         const events = Array.isArray(payload?.events) ? payload.events : [];
+        eventCount = events.length;
         const historyUnreadNotified = { value: false };
         events.forEach((event) =>
           trackPolledEvent(event, {
@@ -521,12 +527,32 @@ app.get("/api/events", async (req, res) => {
       }
     }
 
+    console.log(JSON.stringify({
+      severity: "INFO",
+      message: "event poll upstream response",
+      statusCode: upstreamBody.statusCode,
+      eventCount,
+      deviceId: req.query?.deviceId,
+      since: req.query?.since,
+    }));
+
     res.writeHead(upstreamBody.statusCode, {
       "Content-Type": upstreamBody.contentType,
       "Cache-Control": "no-store",
     });
     res.end(upstreamBody.body);
   } catch (err) {
+    if (clientAborted || req.aborted) {
+      console.warn(JSON.stringify({
+        severity: "WARN",
+        message: "event poll aborted before upstream response completed",
+        error: err.message,
+        code: err.code,
+        deviceId: req.query?.deviceId,
+        since: req.query?.since,
+      }));
+      return;
+    }
     console.error(JSON.stringify({ severity: "ERROR", message: "event poll proxy error", error: err.message }));
     if (!res.headersSent) {
       res.writeHead(502, { "Content-Type": "application/json" });
