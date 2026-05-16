@@ -108,6 +108,7 @@ function isRetryableReplyProxyError(err) {
     "ECONNRESET",
     "EHOSTUNREACH",
     "ECONNREFUSED",
+    "ETIMEDOUT",
   ].includes(code);
 }
 
