@@ -1,9 +1,8 @@
 import os
 import time
-import json
 import logging
 
-from flask import Flask, jsonify, request, Response, stream_with_context
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from google.oauth2 import service_account
 from google.auth.transport.requests import Request as GoogleRequest
@@ -106,38 +105,34 @@ def proxy_photos():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/sse", methods=["GET"])
-def proxy_sse():
+@app.route("/api/events", methods=["GET"])
+def proxy_events():
     """
-    SSE を Cloud Run の /sse に透過中継する。
-    ブラウザは http://localhost:8080/sse?deviceId=...&since=... に接続。
+    Cloud Run の /events を JSON API として中継する。
+    ブラウザは http://localhost:8080/api/events?deviceId=...&since=... に定期アクセスする。
     """
     if not request.args.get("deviceId"):
         return jsonify({"error": "deviceId is required"}), 400
 
-    def generate():
+    try:
+        token = get_id_token(KIOSK_URL)
+        resp = requests.get(
+            f"{KIOSK_URL}/events",
+            params=request.args,
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {token}",
+            },
+            timeout=10,
+        )
         try:
-            token = get_id_token(KIOSK_URL)
-            with requests.get(
-                f"{KIOSK_URL}/sse",
-                params=request.args,
-                headers={
-                    "Accept": "text/event-stream",
-                    "Authorization": f"Bearer {token}",
-                },
-                stream=True,
-                timeout=30,
-            ) as r:
-                for line in r.iter_lines(decode_unicode=True):
-                    if line is None:
-                        continue
-                    # そのまま転送
-                    yield line + "\n"
-        except Exception as e:
-            app.logger.exception("SSE proxy error")
-            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
-
-    return Response(stream_with_context(generate()), mimetype="text/event-stream")
+            data = resp.json()
+        except ValueError:
+            data = {"raw": resp.text}
+        return jsonify(data), resp.status_code
+    except Exception as e:
+        app.logger.exception("Event poll proxy error")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/")

@@ -10,8 +10,6 @@ const firestore = new Firestore({
 });
 
 const PORT = process.env.PORT || 8080;
-const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 2000);
-const HEARTBEAT_INTERVAL_MS = Number(process.env.HEARTBEAT_INTERVAL_MS || 20000);
 const RECENT_LIMIT = Number(process.env.RECENT_LIMIT || 20);
 
 // LINE Bot SDK Client (遅延初期化)
@@ -75,7 +73,7 @@ async function queryDeltaDocs(eventsRef, sinceTs) {
   return mergeAndSortDocs(updatedSnapshot.docs, createdSnapshot.docs);
 }
 
-function writeEvent(res, doc) {
+function serializeEvent(doc) {
   const data = doc.data();
   const rawReply = data.reply || data.replyState || null;
   const reply =
@@ -85,7 +83,7 @@ function writeEvent(res, doc) {
           repliedAt: toMillis(rawReply.repliedAt) || rawReply.repliedAt || null,
         }
       : rawReply;
-  const event = {
+  return {
     id: doc.id,
     deviceId: data.deviceId,
     type: data.type,
@@ -99,88 +97,51 @@ function writeEvent(res, doc) {
     gemini: data.gemini,
     reply,
   };
-  res.write(`event: kiosk_event\n`);
-  res.write(`id: ${doc.id}\n`);
-  res.write(`data: ${JSON.stringify(event)}\n\n`);
 }
 
-async function initialSend(res, deviceId, sinceTs) {
+async function fetchEventDocs(deviceId, sinceTs) {
   const eventsRef = firestore.collection(`devices/${deviceId}/events`);
-  let latestTs = sinceTs;
 
   if (sinceTs) {
-    const docs = await queryDeltaDocs(eventsRef, sinceTs);
-    docs.forEach((doc) => {
-      const data = doc.data();
-      writeEvent(res, doc);
-      const cursorMs = getCursorMillisFromData(data);
-      if (cursorMs) latestTs = Timestamp.fromMillis(cursorMs);
-    });
-    return latestTs;
+    return queryDeltaDocs(eventsRef, sinceTs);
   }
 
   const snapshot = await eventsRef.orderBy("createdAt", "desc").limit(RECENT_LIMIT).get();
-  const docs = snapshot.docs.reverse(); // oldest first
-  docs.forEach((doc) => {
-    const data = doc.data();
-    writeEvent(res, doc);
-    const cursorMs = getCursorMillisFromData(data);
-    if (cursorMs) latestTs = Timestamp.fromMillis(cursorMs);
-  });
-  return latestTs;
+  return snapshot.docs.reverse(); // oldest first
 }
 
-app.get("/sse", async (req, res) => {
+function buildPollResponse(docs, fallbackCursorMs) {
+  let latestCursorMs = null;
+  const events = docs.map((doc) => {
+    const data = doc.data();
+    const cursorMs = getCursorMillisFromData(data);
+    if (cursorMs) latestCursorMs = Math.max(latestCursorMs || 0, cursorMs);
+    return serializeEvent(doc);
+  });
+
+  return {
+    events,
+    count: events.length,
+    cursor: latestCursorMs || fallbackCursorMs,
+  };
+}
+
+app.get("/events", async (req, res) => {
   const deviceId = req.query.deviceId;
   const sinceParam = req.query.since;
   if (!deviceId) {
     return res.status(400).json({ error: "deviceId is required" });
   }
 
-  res.set({
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  });
-  res.flushHeaders?.();
-
-  let latestTs = parseSince(sinceParam, req.get("Last-Event-ID"));
+  const sinceTs = parseSince(sinceParam);
+  const pollStartedAt = Date.now();
   try {
-    latestTs = await initialSend(res, deviceId, latestTs);
+    const docs = await fetchEventDocs(deviceId, sinceTs);
+    return res.status(200).json(buildPollResponse(docs, pollStartedAt));
   } catch (err) {
-    console.error(JSON.stringify({ severity: "ERROR", message: "initial fetch failed", error: err.message, deviceId }));
-    res.write(`event: error\ndata: ${JSON.stringify({ message: "initial fetch failed" })}\n\n`);
+    console.error(JSON.stringify({ severity: "ERROR", message: "events fetch failed", error: err.message, deviceId }));
+    return res.status(500).json({ error: "events fetch failed" });
   }
-
-  const eventsRef = firestore.collection(`devices/${deviceId}/events`);
-  const poller = setInterval(async () => {
-    try {
-      let docs = [];
-      if (latestTs) {
-        docs = await queryDeltaDocs(eventsRef, latestTs);
-      } else {
-        const snapshot = await eventsRef.orderBy("createdAt", "asc").limit(RECENT_LIMIT).get();
-        docs = snapshot.docs;
-      }
-      docs.forEach((doc) => {
-        const data = doc.data();
-        writeEvent(res, doc);
-        const cursorMs = getCursorMillisFromData(data);
-        if (cursorMs) latestTs = Timestamp.fromMillis(cursorMs);
-      });
-    } catch (err) {
-      console.error(JSON.stringify({ severity: "ERROR", message: "poll failed", error: err.message, deviceId }));
-    }
-  }, POLL_INTERVAL_MS);
-
-  const heartbeater = setInterval(() => {
-    res.write(": heartbeat\n\n");
-  }, HEARTBEAT_INTERVAL_MS);
-
-  req.on("close", () => {
-    clearInterval(poller);
-    clearInterval(heartbeater);
-  });
 });
 
 app.post("/line/reply", async (req, res) => {

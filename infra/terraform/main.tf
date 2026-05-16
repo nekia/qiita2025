@@ -341,10 +341,6 @@ resource "google_cloud_run_v2_service" "kiosk_gateway" {
         value = local.firestore_database_id
       }
       env {
-        name  = "POLL_INTERVAL_MS"
-        value = tostring(var.kiosk_gateway_poll_interval_ms)
-      }
-      env {
         name = "LINE_CHANNEL_ACCESS_TOKEN"
         value_source {
           secret_key_ref {

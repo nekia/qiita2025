@@ -594,6 +594,7 @@
                 ? DEFAULT_PROXY_BASE
                 : location.origin;
         const SINCE_KEY = "kiosk_since_ms";
+        const MESSAGE_POLL_INTERVAL_MS = 10000;
         const NOTIFY_SOUND_COOLDOWN_MS = 2000;
         const NOTIFY_SOUND_HISTORY_CUTOFF_MS = 5 * 60 * 1000;
         let audioCtx = null;
@@ -1014,7 +1015,7 @@
         }
 
         // ==========================
-        // SSE (through local proxy)
+        // Message polling (through local proxy)
         // ==========================
         const messageBody = document.getElementById("messageBody");
         const senderNameEl = document.querySelector(".sender-name");
@@ -1467,8 +1468,10 @@
             }
         }
 
-        let eventSource = null;
-        function buildSseUrl(loadHistory = false) {
+        let messagePollTimer = null;
+        let messagePollInFlight = false;
+
+        function buildPollUrl(loadHistory = false) {
             const params = new URLSearchParams({ deviceId: DEVICE_ID });
             const since = localStorage.getItem(SINCE_KEY);
             
@@ -1481,14 +1484,14 @@
                 params.set("since", since);
             }
             
-            return `${PROXY_BASE}/sse?${params.toString()}`;
+            return `${PROXY_BASE}/api/events?${params.toString()}`;
         }
 
-        function startEventStream(loadHistory = false) {
-            if (eventSource) {
-                eventSource.close();
-                eventSource = null;
+        async function pollMessages(loadHistory = false) {
+            if (messagePollInFlight) {
+                return;
             }
+            messagePollInFlight = true;
             const connectionStartedAt = Date.now();
             
             // 履歴を読み込む場合は、既存の履歴をクリア
@@ -1498,22 +1501,18 @@
                 updateNavigationButtons();
             }
             
-            const url = buildSseUrl(loadHistory);
-            console.log("Connecting to SSE:", url);
-            eventSource = new EventSource(url);
+            const url = buildPollUrl(loadHistory);
+            console.log("Polling messages:", url);
+            try {
+                const res = await fetch(url, { headers: { Accept: "application/json" } });
+                if (!res.ok) {
+                    throw new Error(`poll failed: ${res.status}`);
+                }
+                const payload = await res.json();
+                const events = Array.isArray(payload.events) ? payload.events : [];
+                let addedCount = 0;
 
-            eventSource.addEventListener("open", () => {
-                console.log("SSE connection opened");
-            });
-
-            // 初期メッセージの受信を追跡
-            let initialMessagesReceived = false;
-            let initialMessageTimeout = null;
-            let initialMessageCount = 0;
-
-            eventSource.addEventListener("kiosk_event", (ev) => {
-                try {
-                    const data = JSON.parse(ev.data);
+                for (const data of events) {
                     const createdAtMs = parseEventTimeMs(data.createdAt);
                     const isHistoryEvent =
                         loadHistory &&
@@ -1524,62 +1523,44 @@
                     if (wasAdded && !isHistoryEvent && isNewMessage) {
                         playNotifyMelody();
                     }
-                    initialMessageCount++;
-                    
-                    // 初期メッセージ受信フラグを設定
-                    if (!initialMessagesReceived) {
-                        initialMessagesReceived = true;
-                        // 初期メッセージが全て来るまで少し待ってから最新を表示
-                        // 過去1週間のメッセージを取得するため、少し長めに待つ
-                        if (initialMessageTimeout) {
-                            clearTimeout(initialMessageTimeout);
-                        }
-                        initialMessageTimeout = setTimeout(() => {
-                            // 起動直後は「最新の未読」を優先して表示
-                            if (!showLatestUnreadMessage()) {
-                                showLatestMessage();
-                            }
-                            console.log(`Loaded ${initialMessageCount} messages from history`);
-                        }, 1000);
-                    } else {
-                        // 新しいメッセージが来たら即座に最新を表示
-                        showLatestMessage();
-                    }
+                    addedCount += wasAdded ? 1 : 0;
                     
                     const latest = data.updatedAt || data.createdAt || Date.now();
                     localStorage.setItem(SINCE_KEY, latest);
-                } catch (err) {
-                    console.error("failed to handle event", err);
                 }
-            });
 
-            const errorHandler = (ev) => {
-                const state = eventSource?.readyState;
-                const stateText = state === 0 ? "CONNECTING" : state === 1 ? "OPEN" : state === 2 ? "CLOSED" : "UNKNOWN";
-                console.error("SSE error:", {
-                    readyState: state,
-                    stateText,
-                    url,
-                    event: ev
-                });
-                
-                // CLOSED状態の場合は接続が完全に閉じられた
-                if (state === 2) {
-                    console.error("SSE connection closed. Check if proxy server is running and TARGET_BASE is configured correctly.");
-                    // 5秒後に再接続を試みる
-                    setTimeout(() => {
-                        console.log("Retrying SSE connection...");
-                        startEventStream();
-                    }, 5000);
+                if (payload.cursor) {
+                    localStorage.setItem(SINCE_KEY, payload.cursor);
                 }
-            };
-            
-            eventSource.addEventListener("error", errorHandler);
-            eventSource.onerror = errorHandler;
+
+                if (loadHistory) {
+                    // 起動直後は「最新の未読」を優先して表示
+                    if (!showLatestUnreadMessage()) {
+                        showLatestMessage();
+                    }
+                    console.log(`Loaded ${events.length} messages from history`);
+                } else if (addedCount > 0 || events.length > 0) {
+                    // 新しいメッセージや回答状態の更新があれば最新表示へ追従
+                    showLatestMessage();
+                }
+            } catch (err) {
+                console.error("message poll failed", err);
+            } finally {
+                messagePollInFlight = false;
+            }
         }
 
-        // 初回接続時は過去1週間のメッセージを読み込む
-        startEventStream(true);
+        function startMessagePolling(loadHistory = false) {
+            if (messagePollTimer) {
+                clearInterval(messagePollTimer);
+                messagePollTimer = null;
+            }
+            pollMessages(loadHistory);
+            messagePollTimer = setInterval(() => pollMessages(false), MESSAGE_POLL_INTERVAL_MS);
+        }
+
+        // 初回ポーリング時は過去1週間のメッセージを読み込む
+        startMessagePolling(true);
 
         // 初期表示：フォトフレーム画面
         setActiveScreen("photo");

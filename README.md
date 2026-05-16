@@ -1,10 +1,10 @@
-## PoC: LINE → Pub/Sub → Firestore → SSE → Raspberry Pi
+## PoC: LINE → Pub/Sub → Firestore → Polling → Raspberry Pi
 
 ### ディレクトリ
 - `services/dispatcher/` Pub/Sub push → Firestore upsert
-- `services/kiosk-gateway/` Firestoreポーリング → SSE
-- `raspi/local-proxy/` localhostでSSE中継（将来Bearer追加可）
-- `web/` 最小UI（EventSourceで表示）
+- `services/kiosk-gateway/` Firestore差分取得API
+- `raspi/local-proxy/` localhostでAPI中継（将来Bearer追加可）
+- `web/` 最小UI（定期ポーリングで表示）
 - `infra/terraform/` GCPインフラを環境別（production/development）に管理するIaC
 
 ### 事前設定
@@ -91,19 +91,19 @@ KIOSK_URL=$(gcloud run services describe kiosk-gateway --region $REGION --format
 # 必要に応じ Invoker を追加 (例: テスト用ユーザ/サービスアカウント)
 ```
 
-SSE 疎通 (IDトークン付き)
+イベント取得API 疎通 (IDトークン付き)
 ```sh
 TOKEN=$(gcloud auth print-identity-token --audiences=$KIOSK_URL)
-curl -N -H "Authorization: Bearer $TOKEN" "$KIOSK_URL/sse?deviceId=home-parents-1&since=2025-12-13T00:00:00Z"
+curl -sS -H "Authorization: Bearer $TOKEN" "$KIOSK_URL/events?deviceId=home-parents-1&since=2025-12-13T00:00:00Z"
 ```
-ハートビートが15–30秒ごとに出る。新規イベントで `event: kiosk_event` が流れる。
+`events` 配列と次回取得用の `cursor` が JSON で返る。
 
 ### ラズパイ local-proxy
 ```sh
 cd raspi/local-proxy
 TARGET_BASE=$KIOSK_URL PORT=8080 npm install
 TARGET_BASE=$KIOSK_URL PORT=8080 node index.js
-# ブラウザ: http://localhost:8080/ で EventSource が proxy 経由で接続
+# ブラウザ: http://localhost:8080/ で proxy 経由の定期ポーリングを開始
 ```
 - 将来 `PROXY_BEARER_TOKEN` を設定すると Authorization ヘッダを付与して中継。
 
@@ -136,7 +136,7 @@ development 環境の LINE イベントをノートPCのブラウザで表示す
 
 4. **メッセージビューを開く**
    - ブラウザで **`http://localhost:8080/?deviceId=home-parents-dev-1`** を開く。
-   - `deviceId` クエリで development の device を指定すると、その device の Firestore イベントが SSE で表示される。
+   - `deviceId` クエリで development の device を指定すると、その device の Firestore イベントがポーリングで表示される。
    - LINE で development 用ボットにメッセージを送ると、ここにイベントが流れる。
 
 ### 本番でメッセージビューを開く URL と設定場所
@@ -373,26 +373,25 @@ curl -sS http://localhost:8080/healthz
 1. line-webhook → Pub/Sub topic `kiosk-events`
 2. Pub/Sub push (OIDC) → dispatcher `/pubsub/push`
 3. dispatcher が Firestore `devices/{deviceId}/events/{eventId}` に set(merge) （payload.text が無ければ "(no text)"）
-4. kiosk-gateway が Firestore をポーリングし SSE `/sse?deviceId=&since=` で配信（初回は直近20件、以降差分）
-5. local-proxy が Cloud Run SSE を透過中継 → ブラウザの EventSource が表示
+4. kiosk-gateway が Firestore の差分を `GET /events?deviceId=&since=` で返す（初回は直近20件、以降差分）
+5. local-proxy が Cloud Run API を中継 → ブラウザが定期ポーリングして表示
 
 ### エンドポイント仕様
 - dispatcher: `POST /pubsub/push` (Pub/Sub push形式、message.data base64 JSON)
   - 必須: eventId, deviceId, type, payload.text（無い場合は "(no text)" で保存）
   - Firestore doc: createdAt(serverTimestamp), status=new, source=line, line{groupId,messageId,senderName}, occurredAtも保存
   - 成功: 204、バリデーションNG: 400、Firestore失敗: 500
-- kiosk-gateway: `GET /sse?deviceId=...&since=...`
+- kiosk-gateway: `GET /events?deviceId=...&since=...`
   - since: ISO8601 または epoch millis。未指定なら直近20件のみ→増分。
-  - Heartbeat: `: heartbeat`
-  - イベント: `event: kiosk_event`, `id: {eventId}`, `data: {json}`
+  - レスポンス: `{ events: [...], count, cursor }`
 
 ### 最小E2E確認
 1. 上記で Cloud Run 2サービスと Subscription を作成
 2. `gcloud pubsub topics publish ...` でサンプル投入
-3. `curl -N "$KIOSK_URL/sse?deviceId=home-parents-1"` で SSE を観測
+3. `curl -sS "$KIOSK_URL/events?deviceId=home-parents-1"` でイベントJSONを確認
 4. ラズパイで proxy を起動し `http://localhost:8080/` をブラウザで開くと payload.text / senderName が反映
 
 ### 補足
 - PORT 環境変数で listen（すべて対応済み）
 - structured logging: eventId/deviceId を INFO/ERROR で出力
-- 再接続: since をクエリに指定、ブラウザ側は localStorage に createdAt を保持
+- 差分取得: since をクエリに指定、ブラウザ側は localStorage に cursor を保持

@@ -176,7 +176,7 @@ variable "cloud_run_memory" {
 }
 
 variable "kiosk_gateway_cpu" {
-  description = "CPU limit for kiosk-gateway. SSE long-polling is mostly I/O-bound, so minimal CPU suffices."
+  description = "CPU limit for kiosk-gateway."
   type        = string
   default     = "0.08"
 }
@@ -206,9 +206,9 @@ variable "cloud_run_timeout_seconds" {
 }
 
 variable "kiosk_gateway_timeout_seconds" {
-  description = "Request timeout in seconds for kiosk-gateway (SSE long-lived connections). Max 3600."
+  description = "Request timeout in seconds for kiosk-gateway."
   type        = number
-  default     = 3600
+  default     = 60
 }
 
 variable "kiosk_gateway_min_instances" {
@@ -224,15 +224,9 @@ variable "kiosk_gateway_max_instances" {
 }
 
 variable "kiosk_gateway_max_instance_request_concurrency" {
-  description = "Maximum concurrent requests per kiosk-gateway instance (SSE connections)."
+  description = "Maximum concurrent requests per kiosk-gateway instance."
   type        = number
   default     = 40
-}
-
-variable "kiosk_gateway_poll_interval_ms" {
-  description = "Firestore polling interval in milliseconds for kiosk-gateway SSE."
-  type        = number
-  default     = 2000
 }
 
 variable "cloud_run_deletion_protection" {

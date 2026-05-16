@@ -346,42 +346,6 @@ function resolveUnreadEvent(eventId) {
   });
 }
 
-function createSseTapper(onEvent) {
-  let buffer = "";
-  return (chunk) => {
-    buffer += chunk.toString("utf8");
-    buffer = buffer.replace(/\r\n/g, "\n");
-    const parts = buffer.split("\n\n");
-    buffer = parts.pop() || "";
-    for (const part of parts) {
-      const lines = part.split("\n");
-      let eventType = "message";
-      const dataLines = [];
-      for (const line of lines) {
-        if (line.startsWith("event:")) {
-          eventType = line.slice("event:".length).trim();
-        } else if (line.startsWith("data:")) {
-          dataLines.push(line.slice("data:".length).trim());
-        }
-      }
-      if (eventType !== "kiosk_event" || dataLines.length === 0) continue;
-      const dataStr = dataLines.join("\n");
-      try {
-        const event = JSON.parse(dataStr);
-        onEvent?.(event);
-      } catch (err) {
-        console.error(
-          JSON.stringify({
-            severity: "ERROR",
-            message: "failed to parse kiosk_event",
-            error: err.message,
-          })
-        );
-      }
-    }
-  };
-}
-
 function encodePathSegments(relativePath) {
   return relativePath
     .split("/")
@@ -446,9 +410,55 @@ async function getIdTokenCached(keyPath, audience) {
   }
 }
 
-app.get("/sse", async (req, res) => {
-  console.log(JSON.stringify({ severity: "INFO", message: "SSE connection received", query: req.query }));
-  const targetUrl = safeUrl(TARGET_BASE, "/sse");
+function trackPolledEvent(event, context) {
+  const unread = isUnreadEvent(event);
+  logTapeLightDebug({
+    action: "poll_event",
+    eventId: event?.id,
+    type: event?.type,
+    status: event?.status,
+    reply: event?.reply,
+    createdAt: event?.createdAt,
+    unread,
+  });
+  if (!unread) {
+    if (event?.id) {
+      resolveUnreadEvent(event.id);
+    }
+    return;
+  }
+
+  const createdAtMs = parseSinceToMs(event.createdAt);
+  const isHistoryEvent =
+    context.isHistoryLoad &&
+    createdAtMs !== null &&
+    createdAtMs < context.startedAt - HISTORY_UNREAD_CUTOFF_MS;
+
+  if (isHistoryEvent && context.historyUnreadNotified.value) {
+    logTapeLightDebug({
+      action: "history_unread_repeat",
+      eventId: event?.id,
+      createdAt: event?.createdAt,
+    });
+    addUnreadEvent(event.id);
+    return;
+  }
+
+  if (isHistoryEvent && !context.historyUnreadNotified.value) {
+    context.historyUnreadNotified.value = true;
+    logTapeLightDebug({
+      action: "history_unread_first",
+      eventId: event?.id,
+      createdAt: event?.createdAt,
+    });
+  }
+
+  addUnreadEvent(event.id);
+}
+
+app.get("/api/events", async (req, res) => {
+  console.log(JSON.stringify({ severity: "INFO", message: "event poll received", query: req.query }));
+  const targetUrl = safeUrl(TARGET_BASE, "/events");
   if (!targetUrl) {
     console.error(JSON.stringify({ severity: "ERROR", message: "invalid TARGET_BASE", value: TARGET_BASE }));
     return res.status(500).json({ error: "proxy not configured (TARGET_BASE invalid)" });
@@ -458,88 +468,71 @@ app.get("/sse", async (req, res) => {
   const sinceMs = parseSinceToMs(req.query?.since);
   const isHistoryLoad =
     sinceMs !== null && sinceMs < connectionStartedAt - HISTORY_UNREAD_CUTOFF_MS;
-  let historyUnreadNotified = false;
 
   const client = targetUrl.protocol === "https:" ? https : http;
 
-  const headers = { Accept: "text/event-stream" };
+  const headers = { Accept: "application/json" };
   const kioskBearer =
     (await getIdTokenCached(KIOSK_SA_KEY_PATH, TARGET_BASE)) ||
     BEARER;
   if (kioskBearer) headers.Authorization = `Bearer ${kioskBearer}`;
 
-  const upstreamReq = client.request(
-    targetUrl,
-    {
-      method: "GET",
-      headers,
-    },
-    (upstreamRes) => {
-      const tapSse = createSseTapper((event) => {
-        const unread = isUnreadEvent(event);
-        logTapeLightDebug({
-          action: "sse_event",
-          eventId: event?.id,
-          type: event?.type,
-          status: event?.status,
-          reply: event?.reply,
-          createdAt: event?.createdAt,
-          unread,
-        });
-        if (!unread) {
-          if (event?.id) {
-            resolveUnreadEvent(event.id);
-          }
-          return;
-        }
-        const createdAtMs = parseSinceToMs(event.createdAt);
-        const isHistoryEvent =
-          isHistoryLoad &&
-          createdAtMs !== null &&
-          createdAtMs < connectionStartedAt - HISTORY_UNREAD_CUTOFF_MS;
-
-        if (isHistoryEvent && historyUnreadNotified) {
-          // history unread already noticed; still track for continuous blinking
-          logTapeLightDebug({
-            action: "history_unread_repeat",
-            eventId: event?.id,
-            createdAt: event?.createdAt,
+  try {
+    const upstreamBody = await new Promise((resolve, reject) => {
+      const upstreamReq = client.request(
+        targetUrl,
+        {
+          method: "GET",
+          headers,
+        },
+        (upstreamRes) => {
+          let body = "";
+          upstreamRes.on("data", (chunk) => {
+            body += chunk.toString("utf8");
           });
-          addUnreadEvent(event.id);
-          return;
-        }
-
-        if (isHistoryEvent && !historyUnreadNotified) {
-          historyUnreadNotified = true;
-          logTapeLightDebug({
-            action: "history_unread_first",
-            eventId: event?.id,
-            createdAt: event?.createdAt,
+          upstreamRes.on("end", () => {
+            resolve({
+              body,
+              statusCode: upstreamRes.statusCode || 502,
+              contentType: upstreamRes.headers["content-type"] || "application/json",
+            });
           });
         }
+      );
+      upstreamReq.on("error", reject);
+      req.on("aborted", () => upstreamReq.destroy());
+      upstreamReq.end();
+    });
 
-        addUnreadEvent(event.id);
-      });
-      upstreamRes.on("data", tapSse);
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      });
-      upstreamRes.pipe(res);
+    if (upstreamBody.statusCode >= 200 && upstreamBody.statusCode < 300) {
+      try {
+        const payload = JSON.parse(upstreamBody.body);
+        const events = Array.isArray(payload?.events) ? payload.events : [];
+        const historyUnreadNotified = { value: false };
+        events.forEach((event) =>
+          trackPolledEvent(event, {
+            startedAt: connectionStartedAt,
+            isHistoryLoad,
+            historyUnreadNotified,
+          })
+        );
+      } catch (err) {
+        console.error(JSON.stringify({ severity: "ERROR", message: "failed to parse polled events", error: err.message }));
+      }
     }
-  );
 
-  upstreamReq.on("error", (err) => {
-    console.error(JSON.stringify({ severity: "ERROR", message: "proxy error", error: err.message }));
+    res.writeHead(upstreamBody.statusCode, {
+      "Content-Type": upstreamBody.contentType,
+      "Cache-Control": "no-store",
+    });
+    res.end(upstreamBody.body);
+  } catch (err) {
+    console.error(JSON.stringify({ severity: "ERROR", message: "event poll proxy error", error: err.message }));
     if (!res.headersSent) {
       res.writeHead(502, { "Content-Type": "application/json" });
     }
-    res.end(JSON.stringify({ error: "proxy failed" }));
-  });
-
-  req.on("close", () => upstreamReq.destroy());
-  upstreamReq.end();
+    res.end(JSON.stringify({ error: "event poll proxy failed" }));
+  }
 });
 
 app.post("/api/line/reply", async (req, res) => {
