@@ -32,6 +32,8 @@ const ENABLE_TEST_ENDPOINTS = process.env.ENABLE_TEST_ENDPOINTS === "true";
 const SWITCHBOT_MAX_EVENT_AGE_SECONDS = Number(process.env.SWITCHBOT_MAX_EVENT_AGE_SECONDS || 600);
 const SWITCHBOT_MAX_FUTURE_SKEW_SECONDS = Number(process.env.SWITCHBOT_MAX_FUTURE_SKEW_SECONDS || 30);
 const STORE_NOT_DETECTED_EVENTS = process.env.STORE_NOT_DETECTED_EVENTS === "true";
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+const RECENT_EVENTS_COUNT = Number(process.env.RECENT_EVENTS_COUNT || 20);
 const ALLOWED_DEVICE_MACS = (process.env.SWITCHBOT_ALLOWED_DEVICE_MACS || "")
   .split(",")
   .map((v) => v.trim().toUpperCase())
@@ -573,8 +575,141 @@ async function updateStateOnDetection(siteKey, lastDetectedAt) {
   );
 }
 
+function buildRecentEventsUrl(siteKey) {
+  if (!PUBLIC_BASE_URL) return "";
+  return `${PUBLIC_BASE_URL}/view/recent-events?site=${encodeURIComponent(siteKey)}`;
+}
+
+function formatRelativeTime(date) {
+  const diffMs = Date.now() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return "たった今";
+  if (diffMin < 60) return `${diffMin}分前`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `${diffHours}時間${diffMin % 60}分前`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}日${diffHours % 24}時間前`;
+}
+
+function renderRecentEventsHtml(events, siteKey, siteLabel, stateData, asOf) {
+  const modeLabels = { NORMAL: "正常", WARNING: "注意", ALERT: "警戒" };
+  const modeColors = { NORMAL: "#22c55e", WARNING: "#f59e0b", ALERT: "#ef4444" };
+  const currentMode = stateData?.current_mode || "NORMAL";
+  const lastDetectedAt = stateData?.last_detected_at?.toDate?.() || null;
+
+  const rows = events.map((ev) => {
+    const ts = ev.timestamp?.toDate?.();
+    if (!ts) return "";
+    const p = getTzDateParts(ts);
+    return `<tr>
+      <td>${p.month}/${p.day} ${p.timeText}</td>
+      <td>${formatRelativeTime(ts)}</td>
+      <td>${ev.event_type || "motion"}</td>
+    </tr>`;
+  }).join("");
+
+  const lastDetectedText = lastDetectedAt ? formatLocalDateTimeNoTz(lastDetectedAt) : "不明";
+  const lastDetectedRelative = lastDetectedAt ? formatRelativeTime(lastDetectedAt) : "";
+  const asOfText = getTzDateParts(asOf);
+
+  return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>見守りログ - ${siteLabel}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", sans-serif;
+         background: #f8fafc; color: #1e293b; line-height: 1.6; padding: 16px; max-width: 600px; margin: 0 auto; }
+  .header { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  .header h1 { font-size: 1.25rem; margin-bottom: 12px; }
+  .status { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 9999px; color: #fff;
+           font-size: 0.8rem; font-weight: 600; }
+  .info { font-size: 0.85rem; color: #64748b; margin-bottom: 4px; }
+  .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 16px;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  .card h2 { font-size: 1rem; margin-bottom: 12px; color: #334155; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  th { text-align: left; padding: 8px 6px; border-bottom: 2px solid #e2e8f0; color: #64748b;
+       font-size: 0.8rem; font-weight: 600; }
+  td { padding: 10px 6px; border-bottom: 1px solid #f1f5f9; }
+  tr:last-child td { border-bottom: none; }
+  .empty { text-align: center; color: #94a3b8; padding: 32px 0; }
+  .footer { text-align: center; font-size: 0.75rem; color: #94a3b8; padding: 16px 0; }
+  .refresh-btn { display: block; width: 100%; padding: 12px; background: #3b82f6; color: #fff;
+                 border: none; border-radius: 8px; font-size: 0.95rem; cursor: pointer;
+                 margin-bottom: 16px; }
+  .refresh-btn:active { background: #2563eb; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>見守りログ - ${siteLabel}</h1>
+    <div class="status">
+      <span>状態:</span>
+      <span class="badge" style="background:${modeColors[currentMode] || modeColors.NORMAL}">${modeLabels[currentMode] || currentMode}</span>
+    </div>
+    <div class="info">最終検知: ${lastDetectedText}${lastDetectedRelative ? ` (${lastDetectedRelative})` : ""}</div>
+    <div class="info">表示時刻: ${asOfText.month}/${asOfText.day} ${asOfText.timeText}</div>
+  </div>
+
+  <button class="refresh-btn" onclick="location.reload()">最新の情報に更新</button>
+
+  <div class="card">
+    <h2>直近の検知ログ（${events.length}件）</h2>
+    ${events.length > 0 ? `<table>
+      <thead><tr><th>日時</th><th>経過</th><th>種別</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>` : '<div class="empty">検知ログがありません</div>'}
+  </div>
+
+  <div class="footer">見守りシステム</div>
+</body>
+</html>`;
+}
+
 app.get("/healthz", (_req, res) => {
   res.status(200).json({ status: "ok" });
+});
+
+app.get("/view/recent-events", async (req, res) => {
+  try {
+    const siteKey = toDocSafeKey(req.query?.site || "");
+    if (!siteKey) {
+      return res.status(400).send("site パラメータが必要です");
+    }
+    const count = Math.min(Math.max(Number(req.query?.count) || RECENT_EVENTS_COUNT, 1), 50);
+    const siteLabel = resolveSiteLabel(siteKey);
+
+    const stateRef = firestore().collection(FIRESTORE_COLLECTION_STATE).doc(buildStateDocId(siteKey));
+    const stateSnap = await stateRef.get();
+    const stateData = stateSnap.exists ? stateSnap.data() : {};
+
+    const eventsSnap = await firestore()
+      .collection(FIRESTORE_COLLECTION_EVENTS)
+      .where("site_id", "==", siteKey)
+      .orderBy("timestamp", "desc")
+      .limit(count)
+      .get();
+
+    const events = eventsSnap.docs.map((d) => d.data());
+    const html = renderRecentEventsHtml(events, siteKey, siteLabel, stateData, new Date());
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).send(html);
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        severity: "ERROR",
+        message: "recent-events view failed",
+        error: error.message,
+      })
+    );
+    return res.status(500).send("エラーが発生しました");
+  }
 });
 
 app.post("/webhook/switchbot", async (req, res) => {
@@ -849,6 +984,35 @@ app.post("/jobs/learn", async (_req, res) => {
   }
 });
 
+function computeActiveExpectedInactiveHours(
+  lastDetectedAt,
+  currentHour,
+  currentDayOfWeek,
+  statsMap,
+  threshold
+) {
+  if (!lastDetectedAt) return Number.MAX_SAFE_INTEGER;
+
+  const totalInactiveMs = Date.now() - lastDetectedAt.getTime();
+  if (totalInactiveMs <= 0) return 0;
+
+  const totalInactiveHours = totalInactiveMs / (60 * 60 * 1000);
+  const hoursToCheck = Math.min(Math.ceil(totalInactiveHours), 24);
+
+  let count = 0;
+  for (let offset = 0; offset < hoursToCheck; offset++) {
+    const h = ((currentHour - offset) % 24 + 24) % 24;
+    const daysBack = offset > currentHour ? 1 : 0;
+    const dow = (currentDayOfWeek - daysBack + 7) % 7;
+    const prob = Number(statsMap[dow]?.hourly_probability?.[h] || 0);
+    if (prob >= threshold) {
+      count++;
+    }
+  }
+
+  return count;
+}
+
 app.post("/jobs/detect", async (_req, res) => {
   try {
     const { dayOfWeek, hour } = nowInTz();
@@ -858,28 +1022,37 @@ app.post("/jobs/detect", async (_req, res) => {
     for (const siteKey of siteKeys) {
       const stateRef = firestore().collection(FIRESTORE_COLLECTION_STATE).doc(buildStateDocId(siteKey));
       const statsRef = firestore().collection(FIRESTORE_COLLECTION_STATS).doc(buildStatsDocId(siteKey, dayOfWeek));
-      const [stateSnap, statsSnap] = await Promise.all([stateRef.get(), statsRef.get()]);
+      const prevDayOfWeek = (dayOfWeek + 6) % 7;
+      const prevStatsRef = firestore().collection(FIRESTORE_COLLECTION_STATS).doc(buildStatsDocId(siteKey, prevDayOfWeek));
+      const [stateSnap, statsSnap, prevStatsSnap] = await Promise.all([stateRef.get(), statsRef.get(), prevStatsRef.get()]);
       const state = stateSnap.exists ? stateSnap.data() : {};
       const stats = statsSnap.exists ? statsSnap.data() : {};
+      const prevStats = prevStatsSnap.exists ? prevStatsSnap.data() : {};
 
       const expected = Number(stats?.hourly_probability?.[hour] || 0);
       const lastDetectedAt = state?.last_detected_at?.toDate?.() || null;
       const inactiveMs = lastDetectedAt ? Date.now() - lastDetectedAt.getTime() : Number.MAX_SAFE_INTEGER;
       const inactiveHours = inactiveMs / (60 * 60 * 1000);
+      const statsMap = { [dayOfWeek]: stats, [prevDayOfWeek]: prevStats };
+      const activeInactiveHours = computeActiveExpectedInactiveHours(
+        lastDetectedAt, hour, dayOfWeek, statsMap, WARNING_EXPECTED_THRESHOLD
+      );
       const shouldWarning =
-        expected >= WARNING_EXPECTED_THRESHOLD && inactiveHours >= WARNING_INACTIVE_HOURS;
-      const shouldAlert = expected >= ALERT_EXPECTED_THRESHOLD && inactiveHours >= ALERT_INACTIVE_HOURS;
+        expected >= WARNING_EXPECTED_THRESHOLD && activeInactiveHours >= WARNING_INACTIVE_HOURS;
+      const shouldAlert = expected >= ALERT_EXPECTED_THRESHOLD && activeInactiveHours >= ALERT_INACTIVE_HOURS;
       const currentMode = state?.current_mode || "NORMAL";
       const lineConfig = resolveLineConfig(siteKey, state?.device_id);
       const siteLabel = resolveSiteLabel(siteKey);
       const lastDetectedText = formatLocalDateTimeNoTz(lastDetectedAt);
+      const recentEventsUrl = buildRecentEventsUrl(siteKey);
+      const logLinkLine = recentEventsUrl ? `\n📋 検知ログ: ${recentEventsUrl}` : "";
 
       if (shouldAlert) {
         if (currentMode !== "ALERT") {
           await callLinePush(
             `🚨 見守りAlert（${siteLabel}）\n${lastDetectedText}から${inactiveHours.toFixed(
               1
-            )}時間以上動きが検知されていません。\nすぐに電話などで安否確認してください。\nあわせて、センサー（電池残量・設置位置・通信）が正常動作しているかも確認してください。`,
+            )}時間以上動きが検知されていません。\nすぐに電話などで安否確認してください。\nあわせて、センサー（電池残量・設置位置・通信）が正常動作しているかも確認してください。${logLinkLine}`,
             lineConfig
           );
           await stateRef.set(
@@ -895,7 +1068,7 @@ app.post("/jobs/detect", async (_req, res) => {
           await callLinePush(
             `⚠️ 見守りWarning（${siteLabel}）\n${lastDetectedText}から${inactiveHours.toFixed(
               1
-            )}時間以上動きが検知されていません。\n注意が必要です。状況をご確認ください。`,
+            )}時間以上動きが検知されていません。\n注意が必要です。状況をご確認ください。${logLinkLine}`,
             lineConfig
           );
           await stateRef.set(
@@ -930,6 +1103,7 @@ app.post("/jobs/detect", async (_req, res) => {
         should_alert: shouldAlert,
         expected,
         inactive_hours: Number(inactiveHours.toFixed(2)),
+        active_inactive_hours: activeInactiveHours,
         current_mode_before: currentMode,
       });
     }
@@ -978,14 +1152,17 @@ app.post("/jobs/daily-summary", async (_req, res) => {
         prevDaySummary.hourlyCounts,
         `${targetDateKey} ${siteKey}`
       );
-      const text = [
+      const recentEventsUrl = buildRecentEventsUrl(siteKey);
+      const textLines = [
         `日次見守りサマリ (${siteKey})`,
         `日付: ${targetDateKey} (${TZ})`,
         `検知件数: ${daySummary.totalDetections}`,
         `前日検知件数: ${prevDaySummary.totalDetections}`,
         `起床推定: ${daySummary.wakeupTime}`,
         `就寝推定: ${daySummary.bedtimeTime}`,
-      ].join("\n");
+      ];
+      if (recentEventsUrl) textLines.push(`📋 検知ログ: ${recentEventsUrl}`);
+      const text = textLines.join("\n");
 
       const lineConfig = resolveLineConfig(siteKey, representativeDeviceId);
       const debugContext = `daily-summary site=${siteKey} device=${representativeDeviceId || "unknown"} target=${maskLineTarget(
