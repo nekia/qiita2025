@@ -577,7 +577,7 @@ async function updateStateOnDetection(siteKey, lastDetectedAt) {
 
 function buildRecentEventsUrl(siteKey) {
   if (!PUBLIC_BASE_URL) return "";
-  return `${PUBLIC_BASE_URL}/view/recent-events?site=${encodeURIComponent(siteKey)}`;
+  return `${PUBLIC_BASE_URL}/view/recent-events?site=${encodeURIComponent(siteKey)}&count=10`;
 }
 
 function formatRelativeTime(date) {
@@ -604,7 +604,6 @@ function renderRecentEventsHtml(events, siteKey, siteLabel, stateData, asOf) {
     return `<tr>
       <td>${p.month}/${p.day} ${p.timeText}</td>
       <td>${formatRelativeTime(ts)}</td>
-      <td>${ev.event_type || "motion"}</td>
     </tr>`;
   }).join("");
 
@@ -661,7 +660,7 @@ function renderRecentEventsHtml(events, siteKey, siteLabel, stateData, asOf) {
   <div class="card">
     <h2>直近の検知ログ（${events.length}件）</h2>
     ${events.length > 0 ? `<table>
-      <thead><tr><th>日時</th><th>経過</th><th>種別</th></tr></thead>
+      <thead><tr><th>日時</th><th>経過</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>` : '<div class="empty">検知ログがありません</div>'}
   </div>
