@@ -191,3 +191,9 @@ variable "line_channel_access_token_secret_name" {
   type    = string
   default = "line_channel_access_token"
 }
+
+variable "public_base_url" {
+  description = "Public base URL for the service. Used to build recent-events viewer links in LINE messages."
+  type        = string
+  default     = ""
+}

@@ -25,3 +25,8 @@ output "daily_summary_job_name" {
 output "runtime_service_account_email" {
   value = google_service_account.runtime.email
 }
+
+output "recent_events_url" {
+  description = "URL template for the recent-events viewer (append ?site=SITE_KEY)."
+  value       = var.public_base_url != "" ? "${var.public_base_url}/view/recent-events" : null
+}

@@ -187,6 +187,13 @@ resource "google_cloud_run_v2_service" "monitoring_mother" {
           }
         }
       }
+      dynamic "env" {
+        for_each = var.public_base_url != "" ? [var.public_base_url] : []
+        content {
+          name  = "PUBLIC_BASE_URL"
+          value = env.value
+        }
+      }
     }
   }
 
@@ -288,6 +295,27 @@ resource "google_cloud_scheduler_job" "daily_summary" {
       service_account_email = google_service_account.scheduler_invoker.email
       audience              = google_cloud_run_v2_service.monitoring_mother.uri
     }
+  }
+}
+
+resource "google_firestore_index" "events_by_site_timestamp" {
+  project    = var.project_id
+  database   = var.firestore_database_id
+  collection = "sb_events"
+
+  fields {
+    field_path = "site_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "timestamp"
+    order      = "DESCENDING"
+  }
+
+  fields {
+    field_path = "__name__"
+    order      = "DESCENDING"
   }
 }
 

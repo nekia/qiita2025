@@ -627,6 +627,7 @@ module "monitoring_mother" {
   anomaly_inactive_hours              = var.monitoring_mother_inactive_hours
   alert_expected_threshold            = var.monitoring_mother_alert_expected_threshold
   alert_inactive_hours                = var.monitoring_mother_alert_inactive_hours
+  public_base_url                     = var.monitoring_mother_public_base_url
 
   switchbot_secret_name                 = var.secret_name_switchbot_webhook_secret
   line_channel_access_token_secret_name = var.secret_name_line_channel_access_token

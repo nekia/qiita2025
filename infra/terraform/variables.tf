@@ -493,6 +493,12 @@ variable "monitoring_mother_alert_inactive_hours" {
   default     = 4
 }
 
+variable "monitoring_mother_public_base_url" {
+  description = "Public base URL for monitoring-mother. Used to build recent-events viewer links in LINE messages. Empty disables links."
+  type        = string
+  default     = ""
+}
+
 variable "secret_name_switchbot_webhook_secret" {
   description = "Secret Manager secret name for SwitchBot webhook signature verification."
   type        = string
