@@ -983,29 +983,41 @@ app.post("/jobs/learn", async (_req, res) => {
   }
 });
 
-function computeActiveExpectedInactiveHours(
-  lastDetectedAt,
-  currentHour,
-  currentDayOfWeek,
-  statsMap,
-  threshold
-) {
+function getDayOfWeekInTz(date = new Date()) {
+  const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const wkText = new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short" }).format(date);
+  return weekdayMap[wkText];
+}
+
+function computeActiveExpectedInactiveHours(lastDetectedAt, statsMap, threshold) {
   if (!lastDetectedAt) return Number.MAX_SAFE_INTEGER;
 
-  const totalInactiveMs = Date.now() - lastDetectedAt.getTime();
-  if (totalInactiveMs <= 0) return 0;
+  const now = Date.now();
+  const lastMs = lastDetectedAt.getTime();
+  if (now <= lastMs) return 0;
 
-  const totalInactiveHours = totalInactiveMs / (60 * 60 * 1000);
-  const hoursToCheck = Math.min(Math.ceil(totalInactiveHours), 24);
+  const inactiveMs = now - lastMs;
+  const maxOffset = Math.min(Math.ceil(inactiveMs / (60 * 60 * 1000)), 24);
+  const MS_PER_HOUR = 60 * 60 * 1000;
 
   let count = 0;
-  for (let offset = 0; offset < hoursToCheck; offset++) {
-    const h = ((currentHour - offset) % 24 + 24) % 24;
-    const daysBack = offset > currentHour ? 1 : 0;
-    const dow = (currentDayOfWeek - daysBack + 7) % 7;
-    const prob = Number(statsMap[dow]?.hourly_probability?.[h] || 0);
+  // offset=1 skips the current (incomplete) hour so morning checks allow time to wake up.
+  for (let offset = 1; offset <= maxOffset; offset++) {
+    const checkTime = now - offset * MS_PER_HOUR;
+    if (checkTime <= lastMs) {
+      break;
+    }
+
+    const checkDate = new Date(checkTime);
+    const hour = Number(getTzDateParts(checkDate).hour);
+    const dow = getDayOfWeekInTz(checkDate);
+    const prob = Number(statsMap[dow]?.hourly_probability?.[hour] || 0);
+
     if (prob >= threshold) {
       count++;
+    } else {
+      // Stop at the sleep/inactive boundary instead of counting scattered hours.
+      break;
     }
   }
 
@@ -1034,7 +1046,7 @@ app.post("/jobs/detect", async (_req, res) => {
       const inactiveHours = inactiveMs / (60 * 60 * 1000);
       const statsMap = { [dayOfWeek]: stats, [prevDayOfWeek]: prevStats };
       const activeInactiveHours = computeActiveExpectedInactiveHours(
-        lastDetectedAt, hour, dayOfWeek, statsMap, WARNING_EXPECTED_THRESHOLD
+        lastDetectedAt, statsMap, WARNING_EXPECTED_THRESHOLD
       );
       const shouldWarning =
         expected >= WARNING_EXPECTED_THRESHOLD && activeInactiveHours >= WARNING_INACTIVE_HOURS;
@@ -1049,9 +1061,7 @@ app.post("/jobs/detect", async (_req, res) => {
       if (shouldAlert) {
         if (currentMode !== "ALERT") {
           await callLinePush(
-            `🚨 見守りAlert（${siteLabel}）\n${lastDetectedText}から${inactiveHours.toFixed(
-              1
-            )}時間以上動きが検知されていません。\nすぐに電話などで安否確認してください。\nあわせて、センサー（電池残量・設置位置・通信）が正常動作しているかも確認してください。${logLinkLine}`,
+            `🚨 見守りAlert（${siteLabel}）\n${lastDetectedText}から活動が期待される時間帯に${activeInactiveHours}時間以上動きが検知されていません。\nすぐに電話などで安否確認してください。\nあわせて、センサー（電池残量・設置位置・通信）が正常動作しているかも確認してください。${logLinkLine}`,
             lineConfig
           );
           await stateRef.set(
@@ -1065,9 +1075,7 @@ app.post("/jobs/detect", async (_req, res) => {
       } else if (shouldWarning) {
         if (currentMode === "NORMAL") {
           await callLinePush(
-            `⚠️ 見守りWarning（${siteLabel}）\n${lastDetectedText}から${inactiveHours.toFixed(
-              1
-            )}時間以上動きが検知されていません。\n注意が必要です。状況をご確認ください。${logLinkLine}`,
+            `⚠️ 見守りWarning（${siteLabel}）\n${lastDetectedText}から活動が期待される時間帯に${activeInactiveHours}時間以上動きが検知されていません。\n注意が必要です。状況をご確認ください。${logLinkLine}`,
             lineConfig
           );
           await stateRef.set(
