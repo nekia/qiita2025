@@ -174,7 +174,7 @@ variable "anomaly_inactive_hours" {
 
 variable "alert_expected_threshold" {
   type    = number
-  default = 0.85
+  default = 0.7
 }
 
 variable "alert_inactive_hours" {

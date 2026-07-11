@@ -482,9 +482,9 @@ variable "monitoring_mother_inactive_hours" {
 }
 
 variable "monitoring_mother_alert_expected_threshold" {
-  description = "Expected activity probability threshold for Alert escalation."
+  description = "Expected activity probability threshold for Alert escalation. Same as Warning by default; severity differs by inactive hours."
   type        = number
-  default     = 0.85
+  default     = 0.7
 }
 
 variable "monitoring_mother_alert_inactive_hours" {

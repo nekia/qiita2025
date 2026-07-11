@@ -122,7 +122,7 @@ Set these variables in `envs/*.tfvars`:
 - `secret_name_monitoring_mother_line_channel_access_token_map` (optional Secret Manager key for `LINE_CHANNEL_ACCESS_TOKEN_MAP`)
 - `monitoring_mother_expected_threshold` (Warning用, default `0.7`)
 - `monitoring_mother_inactive_hours` (Warning用, default `2`)
-- `monitoring_mother_alert_expected_threshold` (Alert用, default `0.85`)
+- `monitoring_mother_alert_expected_threshold` (Alert用, default `0.7`)
 - `monitoring_mother_alert_inactive_hours` (Alert用, default `4`)
 - `monitoring_mother_log_webhook_payload` (default `false`, enable only for short-term debugging)
 - `monitoring_mother_enable_test_endpoints` (default `false`, enable only in development)
