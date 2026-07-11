@@ -529,7 +529,7 @@ function summarizeDailyActivity(dayEvents, targetDateKey, siteKey) {
   const totalDetections = hourlyCounts.reduce((sum, v) => sum + v, 0);
 
   const morning = points.find((p) => p.hour >= 4 && p.hour <= 11);
-  const nightCandidates = points.filter((p) => p.hour >= 20 || p.hour <= 3);
+  const nightCandidates = points.filter((p) => p.hour >= 18 || p.hour <= 3);
   const bedtime = nightCandidates.length ? nightCandidates[nightCandidates.length - 1] : null;
 
   return {
