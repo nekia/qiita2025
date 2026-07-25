@@ -1,0 +1,7 @@
+# gcloud run deploy / services update 用（カンマ・コロンを含む env の更新）
+# 使い方:
+#   gcloud run deploy monitoring-mother --image=... --region=asia-northeast1 --project=line-msg-kiosk-board --flags-file=infra/scripts/monitoring-mother-env-update.yaml
+--update-env-vars:
+  SWITCHBOT_SITE_MAP: "B0E9FECE1D92:MOTHER_HOME,D9F42B7E2CCB:MOTHER_HOME"
+  SWITCHBOT_ALLOWED_DEVICE_MACS: "B0E9FECE1D92,D9F42B7E2CCB"
+  SWITCHBOT_ALLOWED_DEVICE_TYPES: "WoPresence,Motion Sensor,WoLinkMatter,Hub Mini2"

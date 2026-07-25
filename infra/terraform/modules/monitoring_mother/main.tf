@@ -23,6 +23,11 @@ resource "google_cloud_run_v2_service" "monitoring_mother" {
   name                = local.monitoring_service
   deletion_protection = false
 
+  # Cloud Run API が返す top-level scaling（manual_instance_count 等）との永続ドリフトを無視
+  lifecycle {
+    ignore_changes = [scaling]
+  }
+
   template {
     timeout                          = "${var.cloud_run_timeout_seconds}s"
     max_instance_request_concurrency = 1
