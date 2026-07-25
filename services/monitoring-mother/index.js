@@ -8,6 +8,7 @@ const PORT = Number(process.env.PORT || 8080);
 const FIRESTORE_COLLECTION_EVENTS = "sb_events";
 const FIRESTORE_COLLECTION_STATS = "sb_stats";
 const FIRESTORE_COLLECTION_STATE = "sb_state";
+const FIRESTORE_COLLECTION_SENSOR_READINGS = "sb_sensor_readings";
 
 const LOOKBACK_DAYS = Number(process.env.LEARNING_LOOKBACK_DAYS || 30);
 const WARNING_EXPECTED_THRESHOLD = Number(process.env.WARNING_EXPECTED_THRESHOLD || process.env.ANOMALY_EXPECTED_THRESHOLD || 0.7);
@@ -329,6 +330,7 @@ function formatLocalDateTimeNoTz(date) {
 
 function buildWebhookEventSummary(payload) {
   const context = payload?.context || {};
+  const climate = extractClimateReading(payload);
   return {
     event_type: payload?.eventType || null,
     event_version: payload?.eventVersion || null,
@@ -337,8 +339,49 @@ function buildWebhookEventSummary(payload) {
     detection_state: context?.detectionState || null,
     open_state: context?.openState || null,
     power_state: context?.powerState || null,
+    temperature: climate?.temperature ?? null,
+    humidity: climate?.humidity ?? null,
     time_of_sample: context?.timeOfSample || payload?.timeOfSample || null,
   };
+}
+
+function extractClimateReading(payload) {
+  const context = payload?.context || {};
+  const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
+  const rawTemp = hasOwn(context, "temperature")
+    ? context.temperature
+    : hasOwn(payload, "temperature")
+      ? payload.temperature
+      : undefined;
+  const rawHumidity = hasOwn(context, "humidity")
+    ? context.humidity
+    : hasOwn(payload, "humidity")
+      ? payload.humidity
+      : undefined;
+
+  const hasTemp = rawTemp !== undefined && rawTemp !== null && rawTemp !== "";
+  const hasHumidity = rawHumidity !== undefined && rawHumidity !== null && rawHumidity !== "";
+  if (!hasTemp && !hasHumidity) return null;
+
+  const temperature = hasTemp ? Number(rawTemp) : null;
+  const humidity = hasHumidity ? Number(rawHumidity) : null;
+  if (hasTemp && !Number.isFinite(temperature)) return null;
+  if (hasHumidity && !Number.isFinite(humidity)) return null;
+
+  return {
+    temperature: hasTemp ? temperature : null,
+    humidity: hasHumidity ? humidity : null,
+    scale: context.scale || payload?.scale || "CELSIUS",
+  };
+}
+
+function isMotionDetectionEvent(payload) {
+  const detectionState = payload?.context?.detectionState || payload?.detectionState;
+  return Boolean(detectionState);
+}
+
+function isClimateSensorEvent(payload) {
+  return extractClimateReading(payload) !== null && !isMotionDetectionEvent(payload);
 }
 
 function isNotDetectedEvent(payload) {
@@ -410,28 +453,110 @@ async function callLinePushMessages(messages, options = {}) {
   }
 }
 
-function buildHourlyChartConfig(hourlyCounts, prevDayHourlyCounts, titleDateKey) {
+function buildHourlyChartConfig(hourlyCounts, prevDayHourlyCounts, titleDateKey, hourlyTemps = null) {
   const labels = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}h`);
+  const hasTemps =
+    Array.isArray(hourlyTemps) && hourlyTemps.some((v) => v !== null && v !== undefined && Number.isFinite(Number(v)));
+  const datasets = [
+    {
+      type: "bar",
+      label: "当日",
+      data: hourlyCounts,
+      backgroundColor: "rgba(54, 162, 235, 0.75)",
+      borderColor: "rgba(54, 162, 235, 1)",
+      borderWidth: 1,
+      yAxisID: "y",
+    },
+    {
+      type: "bar",
+      label: "前日",
+      data: prevDayHourlyCounts,
+      backgroundColor: "rgba(140, 140, 140, 0.65)",
+      borderColor: "rgba(120, 120, 120, 1)",
+      borderWidth: 1,
+      yAxisID: "y",
+    },
+  ];
+  if (hasTemps) {
+    datasets.push({
+      type: "line",
+      label: "温度(℃)",
+      data: hourlyTemps,
+      borderColor: "rgba(220, 80, 60, 1)",
+      backgroundColor: "rgba(220, 80, 60, 0.15)",
+      borderWidth: 3,
+      pointRadius: 3,
+      tension: 0.25,
+      spanGaps: true,
+      yAxisID: "y1",
+    });
+  }
+
+  const scales = {
+    x: {
+      ticks: {
+        font: {
+          size: 32,
+        },
+      },
+      title: {
+        display: true,
+        text: "時刻",
+        font: {
+          size: 36,
+        },
+      },
+    },
+    y: {
+      beginAtZero: true,
+      position: "left",
+      ticks: {
+        precision: 0,
+        font: {
+          size: 32,
+        },
+      },
+      title: {
+        display: true,
+        text: "検出回数",
+        font: {
+          size: 36,
+        },
+      },
+    },
+  };
+  if (hasTemps) {
+    const numericTemps = hourlyTemps.filter((v) => v !== null && v !== undefined && Number.isFinite(Number(v))).map(Number);
+    const minTemp = Math.min(...numericTemps);
+    const maxTemp = Math.max(...numericTemps);
+    const pad = Math.max(0.5, (maxTemp - minTemp) * 0.15 || 1);
+    scales.y1 = {
+      position: "right",
+      grid: {
+        drawOnChartArea: false,
+      },
+      suggestedMin: Math.floor(minTemp - pad),
+      suggestedMax: Math.ceil(maxTemp + pad),
+      ticks: {
+        font: {
+          size: 32,
+        },
+      },
+      title: {
+        display: true,
+        text: "温度(℃)",
+        font: {
+          size: 36,
+        },
+      },
+    };
+  }
+
   return {
     type: "bar",
     data: {
       labels,
-      datasets: [
-        {
-          label: "当日",
-          data: hourlyCounts,
-          backgroundColor: "rgba(54, 162, 235, 0.75)",
-          borderColor: "rgba(54, 162, 235, 1)",
-          borderWidth: 1,
-        },
-        {
-          label: "前日",
-          data: prevDayHourlyCounts,
-          backgroundColor: "rgba(140, 140, 140, 0.65)",
-          borderColor: "rgba(120, 120, 120, 1)",
-          borderWidth: 1,
-        },
-      ],
+      datasets,
     },
     options: {
       plugins: {
@@ -451,48 +576,18 @@ function buildHourlyChartConfig(hourlyCounts, prevDayHourlyCounts, titleDateKey)
           },
         },
       },
-      scales: {
-        x: {
-          ticks: {
-            font: {
-              size: 32,
-            },
-          },
-          title: {
-            display: true,
-            text: "時刻",
-            font: {
-              size: 36,
-            },
-          },
-        },
-        y: {
-          beginAtZero: true,
-          ticks: {
-            precision: 0,
-            font: {
-              size: 32,
-            },
-          },
-          title: {
-            display: true,
-            text: "検出回数",
-            font: {
-              size: 36,
-            },
-          },
-        },
-      },
+      scales,
     },
   };
 }
 
-async function buildHourlyChartUrl(hourlyCounts, prevDayHourlyCounts, titleDateKey) {
-  const chartConfig = buildHourlyChartConfig(hourlyCounts, prevDayHourlyCounts, titleDateKey);
+async function buildHourlyChartUrl(hourlyCounts, prevDayHourlyCounts, titleDateKey, hourlyTemps = null) {
+  const chartConfig = buildHourlyChartConfig(hourlyCounts, prevDayHourlyCounts, titleDateKey, hourlyTemps);
   const response = await fetch("https://quickchart.io/chart/create", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      version: "4",
       chart: chartConfig,
       width: 1100,
       height: 620,
@@ -507,7 +602,8 @@ async function buildHourlyChartUrl(hourlyCounts, prevDayHourlyCounts, titleDateK
     }
   }
   // Fallback to direct URL when short URL creation fails.
-  return `https://quickchart.io/chart?width=1100&height=620&format=png&backgroundColor=white&c=${encodeURIComponent(JSON.stringify(chartConfig))}`;
+  // version=4 is required for dual-axis (y / y1) mixed bar+line charts.
+  return `https://quickchart.io/chart?v=4&width=1100&height=620&format=png&backgroundColor=white&c=${encodeURIComponent(JSON.stringify(chartConfig))}`;
 }
 
 function summarizeDailyActivity(dayEvents, targetDateKey, siteKey) {
@@ -538,6 +634,56 @@ function summarizeDailyActivity(dayEvents, targetDateKey, siteKey) {
     wakeupTime: morning?.timeText || "N/A",
     bedtimeTime: bedtime?.timeText || "N/A",
   };
+}
+
+function summarizeHourlyTemperatures(readings, targetDateKey, siteKey) {
+  const buckets = Array.from({ length: 24 }, () => []);
+  const samples = [];
+
+  readings.forEach((reading) => {
+    if (resolveEventSiteId(reading) !== siteKey) return;
+    const ts = reading.timestamp?.toDate?.();
+    if (!ts) return;
+    const p = getTzDateParts(ts);
+    if (p.dateKey !== targetDateKey) return;
+    const temperature = Number(reading.temperature);
+    if (!Number.isFinite(temperature)) return;
+    const hour = Number(p.hour);
+    buckets[hour].push(temperature);
+    samples.push({ ts, hour, temperature });
+  });
+
+  samples.sort((a, b) => a.ts.getTime() - b.ts.getTime());
+  const hourlyAvg = buckets.map((vals) => {
+    if (!vals.length) return null;
+    return Number((vals.reduce((sum, v) => sum + v, 0) / vals.length).toFixed(1));
+  });
+
+  // Hub Mini2 webhooks fire on change only; carry forward so the Y2 line stays continuous.
+  let last = null;
+  const hourlyTemps = hourlyAvg.map((value) => {
+    if (value !== null) {
+      last = value;
+      return value;
+    }
+    return last;
+  });
+
+  const temps = samples.map((s) => s.temperature);
+  return {
+    hourlyTemps,
+    sampleCount: temps.length,
+    minTemp: temps.length ? Number(Math.min(...temps).toFixed(1)) : null,
+    maxTemp: temps.length ? Number(Math.max(...temps).toFixed(1)) : null,
+    avgTemp: temps.length
+      ? Number((temps.reduce((sum, v) => sum + v, 0) / temps.length).toFixed(1))
+      : null,
+  };
+}
+
+function formatTempC(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "N/A";
+  return `${Number(value).toFixed(1)}℃`;
 }
 
 function getPreviousDateKeyFromTzDateKey(dateKey) {
@@ -781,6 +927,54 @@ app.post("/webhook/switchbot", async (req, res) => {
         device_type: filterResult.deviceType,
         reason: filterResult.reason,
       });
+    }
+
+    const climateReading = extractClimateReading(payload);
+    if (climateReading && isClimateSensorEvent(payload)) {
+      const eventTimestamp = parseEventTimestamp(payload);
+      const deviceId = extractDeviceId(payload);
+      const siteKey = resolveSiteKey(deviceId);
+      const idempotencyKey = computeIdempotencyKey(req.rawBody);
+      const readingRef = firestore().collection(FIRESTORE_COLLECTION_SENSOR_READINGS).doc(idempotencyKey);
+
+      const alreadyProcessed = await firestore().runTransaction(async (tx) => {
+        const snap = await tx.get(readingRef);
+        if (snap.exists) return true;
+        tx.set(readingRef, {
+          device_id: deviceId,
+          site_id: siteKey,
+          timestamp: Timestamp.fromDate(eventTimestamp),
+          temperature: climateReading.temperature,
+          humidity: climateReading.humidity,
+          scale: climateReading.scale,
+          device_type: extractDeviceType(payload) || null,
+          event_type: extractEventType(payload),
+        });
+        return false;
+      });
+
+      if (alreadyProcessed) {
+        console.log(
+          JSON.stringify({
+            severity: "INFO",
+            message: "switchbot climate webhook duplicate ignored",
+            event: eventSummary,
+            idempotency_key: idempotencyKey,
+          })
+        );
+        return res.status(202).json({ status: "duplicate_ignored" });
+      }
+
+      console.log(
+        JSON.stringify({
+          severity: "INFO",
+          message: "switchbot climate webhook accepted and stored",
+          event: eventSummary,
+          idempotency_key: idempotencyKey,
+          site_id: siteKey,
+        })
+      );
+      return res.status(202).json({ status: "accepted_climate" });
     }
 
     if (!STORE_NOT_DETECTED_EVENTS && isNotDetectedEvent(payload)) {
@@ -1138,13 +1332,25 @@ app.post("/jobs/daily-summary", async (_req, res) => {
     const targetDateKey = getTzDateParts(now).dateKey;
     const from = new Date(now.getTime() - DAILY_SUMMARY_LOOKBACK_HOURS * 60 * 60 * 1000);
 
-    const snapshot = await firestore()
-      .collection(FIRESTORE_COLLECTION_EVENTS)
-      .where("timestamp", ">=", Timestamp.fromDate(from))
-      .get();
+    const [snapshot, sensorSnapshot] = await Promise.all([
+      firestore()
+        .collection(FIRESTORE_COLLECTION_EVENTS)
+        .where("timestamp", ">=", Timestamp.fromDate(from))
+        .get(),
+      firestore()
+        .collection(FIRESTORE_COLLECTION_SENSOR_READINGS)
+        .where("timestamp", ">=", Timestamp.fromDate(from))
+        .get(),
+    ]);
 
     const events = snapshot.docs.map((d) => d.data());
-    const siteKeys = Array.from(new Set(events.map((e) => resolveEventSiteId(e)).filter(Boolean)));
+    const sensorReadings = sensorSnapshot.docs.map((d) => d.data());
+    const siteKeys = Array.from(
+      new Set([
+        ...events.map((e) => resolveEventSiteId(e)),
+        ...sensorReadings.map((r) => resolveEventSiteId(r)),
+      ].filter(Boolean))
+    );
     const sent = [];
     const failed = [];
 
@@ -1152,12 +1358,18 @@ app.post("/jobs/daily-summary", async (_req, res) => {
       const daySummary = summarizeDailyActivity(events, targetDateKey, siteKey);
       const prevDateKey = getPreviousDateKeyFromTzDateKey(targetDateKey);
       const prevDaySummary = summarizeDailyActivity(events, prevDateKey, siteKey);
+      const tempSummary = summarizeHourlyTemperatures(sensorReadings, targetDateKey, siteKey);
       const siteEvents = events.filter((e) => resolveEventSiteId(e) === siteKey);
-      const representativeDeviceId = siteEvents.find((e) => e?.device_id)?.device_id || "";
+      const siteReadings = sensorReadings.filter((r) => resolveEventSiteId(r) === siteKey);
+      const representativeDeviceId =
+        siteEvents.find((e) => e?.device_id)?.device_id ||
+        siteReadings.find((r) => r?.device_id)?.device_id ||
+        "";
       const chartUrl = await buildHourlyChartUrl(
         daySummary.hourlyCounts,
         prevDaySummary.hourlyCounts,
-        `${targetDateKey} ${siteKey}`
+        `${targetDateKey} ${siteKey}`,
+        tempSummary.sampleCount > 0 ? tempSummary.hourlyTemps : null
       );
       const recentEventsUrl = buildRecentEventsUrl(siteKey);
       const textLines = [
@@ -1168,13 +1380,18 @@ app.post("/jobs/daily-summary", async (_req, res) => {
         `起床推定: ${daySummary.wakeupTime}`,
         `就寝推定: ${daySummary.bedtimeTime}`,
       ];
+      if (tempSummary.sampleCount > 0) {
+        textLines.push(
+          `温度: 最低 ${formatTempC(tempSummary.minTemp)} / 最高 ${formatTempC(tempSummary.maxTemp)} / 平均 ${formatTempC(tempSummary.avgTemp)}`
+        );
+      }
       if (recentEventsUrl) textLines.push(`📋 検知ログ: ${recentEventsUrl}`);
       const text = textLines.join("\n");
 
       const lineConfig = resolveLineConfig(siteKey, representativeDeviceId);
       const debugContext = `daily-summary site=${siteKey} device=${representativeDeviceId || "unknown"} target=${maskLineTarget(
         lineConfig.targetId
-      )} chart_url_length=${String(chartUrl || "").length}`;
+      )} chart_url_length=${String(chartUrl || "").length} temp_samples=${tempSummary.sampleCount}`;
 
       try {
         await callLinePushMessages(
@@ -1196,6 +1413,12 @@ app.post("/jobs/daily-summary", async (_req, res) => {
           detections: daySummary.totalDetections,
           wakeup_time: daySummary.wakeupTime,
           bedtime_time: daySummary.bedtimeTime,
+          temperature: {
+            samples: tempSummary.sampleCount,
+            min: tempSummary.minTemp,
+            max: tempSummary.maxTemp,
+            avg: tempSummary.avgTemp,
+          },
           chart_url: chartUrl,
         });
       } catch (siteError) {

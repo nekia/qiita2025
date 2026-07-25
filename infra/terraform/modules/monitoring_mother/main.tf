@@ -360,3 +360,45 @@ resource "google_firestore_index" "events_by_type_timestamp" {
     order      = "DESCENDING"
   }
 }
+
+resource "google_firestore_index" "sensor_readings_by_site_timestamp" {
+  project    = var.project_id
+  database   = var.firestore_database_id
+  collection = "sb_sensor_readings"
+
+  fields {
+    field_path = "site_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "timestamp"
+    order      = "DESCENDING"
+  }
+
+  fields {
+    field_path = "__name__"
+    order      = "DESCENDING"
+  }
+}
+
+resource "google_firestore_index" "sensor_readings_by_device_timestamp" {
+  project    = var.project_id
+  database   = var.firestore_database_id
+  collection = "sb_sensor_readings"
+
+  fields {
+    field_path = "device_id"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "timestamp"
+    order      = "DESCENDING"
+  }
+
+  fields {
+    field_path = "__name__"
+    order      = "DESCENDING"
+  }
+}
